@@ -9,11 +9,11 @@ import {
   Users,
   TrendingUp,
   TrendingDown,
-  ArrowRight,
   BarChart3,
   Trash2,
   Plus,
   Package,
+  ImageOff,
 } from 'lucide-react';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { useCurrency } from '@/contexts/CurrencyContext';
@@ -22,7 +22,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/hooks/useAuth';
-import { doc, getDoc, setDoc, collection, addDoc, Timestamp, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, addDoc, Timestamp, serverTimestamp, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
 import {
@@ -35,24 +35,20 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
-// Test shoe products for generating test orders
-const TEST_PRODUCTS = [
-  { name: 'Nike Air Max 90', category: 'Shoes', price: 120 },
-  { name: 'Adidas Ultraboost', category: 'Shoes', price: 180 },
-  { name: 'New Balance 574', category: 'Shoes', price: 85 },
-  { name: 'Puma RS-X', category: 'Shoes', price: 110 },
-  { name: 'Converse Chuck Taylor', category: 'Shoes', price: 65 },
-  { name: 'Vans Old Skool', category: 'Shoes', price: 70 },
-  { name: 'Reebok Classic', category: 'Shoes', price: 75 },
-  { name: 'Jordan 1 Retro', category: 'Shoes', price: 170 },
-  { name: 'Nike Dunk Low', category: 'Shoes', price: 100 },
-  { name: 'Asics Gel-Lyte III', category: 'Shoes', price: 130 },
-];
-
+// Customer names for test orders
 const TEST_CUSTOMERS = [
   'John Smith', 'Maria Garcia', 'David Chen', 'Sarah Johnson', 'Mike Brown',
   'Emily Davis', 'Chris Wilson', 'Lisa Anderson', 'James Taylor', 'Anna Martinez',
 ];
+
+// Product type from Firestore
+interface FirestoreProduct {
+  id: string;
+  name: string;
+  price: number;
+  imageUrl?: string;
+  category?: string;
+}
 
 // Stat Card Component
 function StatCard({
@@ -142,8 +138,30 @@ function TrafficAnalytics({ data }: { data: { name: string; views: string; perce
   );
 }
 
+// Product Image Component with fallback
+function ProductThumbnail({ src, alt }: { src?: string; alt: string }) {
+  const [error, setError] = useState(false);
+
+  if (!src || error) {
+    return (
+      <div className="w-full h-full bg-slate-600/50 flex items-center justify-center">
+        <ImageOff className="w-5 h-5 text-slate-500" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="w-full h-full object-cover"
+      onError={() => setError(true)}
+    />
+  );
+}
+
 export default function DashboardPage() {
-  const { metrics, weeklySales, productSales, loading, normalizedSales } = useDashboardData(30);
+  const { loading, normalizedSales } = useDashboardData(30);
   const { formatAmount } = useCurrency();
   const { user } = useAuth();
   const { palette } = useTheme();
@@ -213,7 +231,7 @@ export default function DashboardPage() {
     }
   };
 
-  // Generate test order handler
+  // Generate test order handler - fetches REAL products from Firestore
   const handleGenerateTestOrder = async () => {
     if (!user?.uid) {
       toast.error('You must be logged in to generate test orders.');
@@ -222,41 +240,76 @@ export default function DashboardPage() {
 
     setIsGeneratingOrder(true);
     try {
-      const product = TEST_PRODUCTS[Math.floor(Math.random() * TEST_PRODUCTS.length)];
+      // Fetch products from Firestore products collection
+      const productsSnapshot = await getDocs(collection(db, 'products'));
+
+      if (productsSnapshot.empty) {
+        toast.error('No products found. Please add products first.');
+        setIsGeneratingOrder(false);
+        return;
+      }
+
+      // Map products with their IDs
+      const products: FirestoreProduct[] = productsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        name: doc.data().name || 'Unknown Product',
+        price: doc.data().price || 0,
+        imageUrl: doc.data().imageUrl || '',
+        category: doc.data().category || 'Uncategorized',
+      }));
+
+      // Select a random product
+      const product = products[Math.floor(Math.random() * products.length)];
       const customer = TEST_CUSTOMERS[Math.floor(Math.random() * TEST_CUSTOMERS.length)];
       const quantity = Math.floor(Math.random() * 3) + 1;
       const totalAmount = product.price * quantity;
       const paymentMethod = ['Credit Card', 'Bank Transfer', 'PayPal', 'Cash'][Math.floor(Math.random() * 4)];
 
-      // Random date within last 60 days
-      const daysAgo = Math.floor(Math.random() * 60);
+      // Random date within last 30 days (more recent for better visibility)
+      const daysAgo = Math.floor(Math.random() * 30);
       const orderDate = new Date();
       orderDate.setDate(orderDate.getDate() - daysAgo);
 
       const orderTimestamp = Timestamp.fromDate(orderDate);
-      const orderId = `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const orderId = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 
-      // Base order data with placeholder image
+      // Order data using REAL product data from Firestore
       const baseOrderData = {
         orderId: orderId,
+        // Product reference fields
+        productId: product.id,
+        productName: product.name,
+        productImage: product.imageUrl || '',
+        // Legacy fields for compatibility
         product: product.name,
         category: product.category,
-        image: 'https://picsum.photos/400',
+        image: product.imageUrl || '',
+        // Financial data
         amount: totalAmount,
         price: product.price,
         quantity: quantity,
+        // Customer data
         customer: customer,
         customerName: customer,
+        // Order metadata
         status: 'paid',
-        source: 'manual',
+        source: 'test',
         location: ['CA', 'NY', 'TX', 'FL', 'IL'][Math.floor(Math.random() * 5)],
         notes: `Test order - ${quantity}x ${product.name}`,
+        // Timestamps
         createdAt: orderTimestamp,
         date: orderTimestamp,
         userId: user.uid,
       };
 
-      console.log('Creating test order:', { orderId, product: product.name, quantity, totalAmount, userId: user.uid });
+      console.log('Creating test order with real product:', {
+        orderId,
+        productId: product.id,
+        productName: product.name,
+        productImage: product.imageUrl,
+        quantity,
+        totalAmount,
+      });
 
       // Write to all three collections: orders, transactions, sales
       const [orderRef, transactionRef, saleRef] = await Promise.all([
@@ -294,10 +347,8 @@ export default function DashboardPage() {
     } catch (error: any) {
       console.error('Error generating test order:', error);
 
-      // Provide specific error messages based on error type
       if (error?.code === 'permission-denied') {
-        toast.error('Permission denied. Please check Firestore rules allow authenticated writes.');
-        console.error('Firestore permission denied. Ensure rules allow: authenticated users to write to orders, transactions, and sales collections with their userId.');
+        toast.error('Permission denied. Please check Firestore rules.');
       } else if (error?.code === 'unauthenticated') {
         toast.error('Authentication required. Please log in again.');
       } else if (error?.message?.includes('network')) {
@@ -347,14 +398,12 @@ export default function DashboardPage() {
     const prevUniqueCustomers = new Set(previousPaidSales.map(s => s.customer)).size;
     const prevProductViewed = Math.floor(prevTransactions * 7);
 
-    // Calculate deltas (percentage change) - only if there's previous data
+    // Calculate deltas
     const calcDelta = (current: number, previous: number) => {
-      if (previous === 0) return 0; // No previous data = no percentage
+      if (previous === 0) return 0;
       return ((current - previous) / previous) * 100;
     };
 
-    // Determine if we should show changes
-    // Hide if: no current data OR no previous data OR analytics were cleared
     const hasCurrentData = totalRevenue > 0 || totalTransactions > 0;
     const hasPreviousData = prevRevenue > 0 || prevTransactions > 0;
     const showDeltas = hasCurrentData && hasPreviousData && !analyticsResetTimestamp;
@@ -372,7 +421,7 @@ export default function DashboardPage() {
     };
   }, [filteredSales, analyticsResetTimestamp]);
 
-  // Sales by platform data (derived from actual orders)
+  // Sales by platform data
   const salesByPlatform = useMemo(() => {
     const hasData = stats.totalRevenue > 0;
     return [
@@ -383,7 +432,7 @@ export default function DashboardPage() {
     ];
   }, [stats.totalRevenue, colors]);
 
-  // Traffic data (derived from order count)
+  // Traffic data
   const trafficData = useMemo(() => {
     const hasData = stats.totalTransactions > 0;
     const baseViews = stats.totalTransactions * 50;
@@ -394,7 +443,7 @@ export default function DashboardPage() {
     ];
   }, [stats.totalTransactions]);
 
-  // Popular products from Firestore orders - by quantity sold, only completed orders
+  // Popular products from Firestore sales - grouped by productId with images
   const popularProducts = useMemo(() => {
     // Filter to only completed (paid) orders
     const completedOrders = filteredSales.filter(sale => sale.status === 'paid');
@@ -403,31 +452,49 @@ export default function DashboardPage() {
       return [];
     }
 
-    // Group by product and count quantity
-    const productMap = new Map<string, { quantity: number; revenue: number }>();
+    // Group by productId (or productName as fallback) and track image
+    const productMap = new Map<string, {
+      productId: string;
+      name: string;
+      image: string;
+      quantity: number;
+      revenue: number;
+    }>();
 
     completedOrders.forEach(sale => {
-      const productName = sale.product || 'Unknown Product';
-      const existing = productMap.get(productName) || { quantity: 0, revenue: 0 };
-      // Use quantity field if available, otherwise count as 1
-      const qty = (sale as any).quantity || 1;
-      existing.quantity += qty;
-      existing.revenue += sale.amount;
-      productMap.set(productName, existing);
+      // Use productId if available, otherwise use product name as key
+      const saleData = sale as any;
+      const productId = saleData.productId || saleData.product || 'unknown';
+      const productName = saleData.productName || saleData.product || 'Unknown Product';
+      const productImage = saleData.productImage || saleData.image || '';
+      const qty = saleData.quantity || 1;
+
+      const existing = productMap.get(productId);
+      if (existing) {
+        existing.quantity += qty;
+        existing.revenue += sale.amount;
+        // Keep the first non-empty image found
+        if (!existing.image && productImage) {
+          existing.image = productImage;
+        }
+      } else {
+        productMap.set(productId, {
+          productId,
+          name: productName,
+          image: productImage,
+          quantity: qty,
+          revenue: sale.amount,
+        });
+      }
     });
 
-    // Sort by quantity and take top 6
-    return Array.from(productMap.entries())
-      .sort((a, b) => b[1].quantity - a[1].quantity)
-      .slice(0, 6)
-      .map(([name, data]) => ({
-        name,
-        quantity: data.quantity,
-        revenue: data.revenue
-      }));
+    // Sort by quantity sold and take top 6
+    return Array.from(productMap.values())
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 6);
   }, [filteredSales]);
 
-  // Monthly sales chart data (uses filtered sales for analytics reset)
+  // Monthly sales chart data
   const monthlySalesData = useMemo(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const currentMonth = new Date().getMonth();
@@ -558,20 +625,21 @@ export default function DashboardPage() {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">
-              {popularProducts.map((product, index) => (
+              {popularProducts.map((product) => (
                 <div
-                  key={index}
-                  className="aspect-square bg-slate-700/50 rounded-xl flex items-center justify-center p-3 hover:bg-slate-700 transition-colors cursor-pointer border border-white/5 hover:border-primary-accent/30"
+                  key={product.productId}
+                  className="aspect-square bg-slate-700/50 rounded-xl overflow-hidden hover:bg-slate-700 transition-colors cursor-pointer border border-white/5 hover:border-primary-accent/30"
                 >
-                  <div className="text-center">
-                    <div
-                      className="w-12 h-12 rounded-lg mx-auto mb-2 flex items-center justify-center"
-                      style={{ background: `linear-gradient(135deg, rgba(${colors.primaryRgb}, 0.2), rgba(${colors.secondaryRgb}, 0.2))` }}
-                    >
-                      <span className="text-lg">👟</span>
+                  <div className="flex flex-col h-full">
+                    {/* Product Image */}
+                    <div className="flex-1 min-h-0 relative">
+                      <ProductThumbnail src={product.image} alt={product.name} />
                     </div>
-                    <p className="text-white text-xs font-medium truncate">{product.name.slice(0, 15)}</p>
-                    <p className="text-slate-400 text-xs">{product.quantity} sold</p>
+                    {/* Product Info */}
+                    <div className="p-2 bg-slate-800/80">
+                      <p className="text-white text-xs font-medium truncate">{product.name}</p>
+                      <p className="text-slate-400 text-xs">{product.quantity} sold</p>
+                    </div>
                   </div>
                 </div>
               ))}
