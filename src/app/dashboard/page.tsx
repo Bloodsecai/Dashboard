@@ -179,6 +179,7 @@ export default function DashboardPage() {
   const [analyticsResetTimestamp, setAnalyticsResetTimestamp] = useState<Date | null>(null);
   const [loadingPreferences, setLoadingPreferences] = useState(true);
   const [isGeneratingOrder, setIsGeneratingOrder] = useState(false);
+  const [salesTimeRange, setSalesTimeRange] = useState<'7d' | '14d' | '1m' | '1y'>('1y');
 
   // Realtime listener for orders collection
   useEffect(() => {
@@ -434,22 +435,76 @@ export default function DashboardPage() {
       .slice(0, 6);
   }, [filteredOrders]);
 
-  // Monthly sales chart data
-  const monthlySalesData = useMemo(() => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const currentMonth = new Date().getMonth();
+  // Sales chart data - filtered by time range and aggregated
+  const salesChartData = useMemo(() => {
+    const now = new Date();
+    let startDate: Date;
+    let aggregateByMonth = false;
 
-    return months.slice(0, currentMonth + 1).map((month, index) => {
-      const monthOrders = filteredOrders.filter((order) => {
-        const orderMonth = order.createdAt.getMonth();
-        return orderMonth === index;
+    switch (salesTimeRange) {
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '14d':
+        startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+        break;
+      case '1m':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '1y':
+        startDate = new Date(now.getFullYear(), 0, 1); // Start of current year
+        aggregateByMonth = true;
+        break;
+    }
+
+    // Filter orders by date range
+    const rangeOrders = filteredOrders.filter((order) => order.createdAt >= startDate);
+
+    if (aggregateByMonth) {
+      // Aggregate by month for 1y view
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const currentMonth = now.getMonth();
+
+      return months.slice(0, currentMonth + 1).map((month, index) => {
+        const monthOrders = rangeOrders.filter((order) => order.createdAt.getMonth() === index);
+        return {
+          name: month,
+          sales: monthOrders.reduce((sum, order) => sum + order.amount, 0),
+        };
       });
-      return {
-        name: month,
-        sales: monthOrders.reduce((sum, order) => sum + order.amount, 0),
-      };
-    });
-  }, [filteredOrders]);
+    } else {
+      // Aggregate by day for 7d/14d/1m views
+      const dayMap = new Map<string, number>();
+
+      // Initialize all days in range
+      const daysInRange = salesTimeRange === '7d' ? 7 : salesTimeRange === '14d' ? 14 : 30;
+      for (let i = daysInRange - 1; i >= 0; i--) {
+        const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        const key = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        dayMap.set(key, 0);
+      }
+
+      // Sum amounts by day
+      rangeOrders.forEach((order) => {
+        const key = order.createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        if (dayMap.has(key)) {
+          dayMap.set(key, (dayMap.get(key) || 0) + order.amount);
+        }
+      });
+
+      return Array.from(dayMap.entries()).map(([name, sales]) => ({ name, sales }));
+    }
+  }, [filteredOrders, salesTimeRange]);
+
+  // Get label for time range
+  const timeRangeLabel = useMemo(() => {
+    switch (salesTimeRange) {
+      case '7d': return 'Last 7 days';
+      case '14d': return 'Last 14 days';
+      case '1m': return 'Last 30 days';
+      case '1y': return 'This year';
+    }
+  }, [salesTimeRange]);
 
   if (loadingOrders || loadingPreferences) {
     return (
@@ -592,15 +647,24 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="text-lg font-semibold text-white">Sales Analytics</h2>
-            <p className="text-slate-400 text-sm">Monthly sales performance</p>
+            <p className="text-slate-400 text-sm">
+              {salesTimeRange === '1y' ? 'Monthly' : 'Daily'} sales performance - {timeRangeLabel}
+            </p>
           </div>
-          <select className="bg-slate-700 text-white text-sm rounded-lg px-3 py-2 border border-white/10">
-            <option>This Year</option>
+          <select
+            value={salesTimeRange}
+            onChange={(e) => setSalesTimeRange(e.target.value as '7d' | '14d' | '1m' | '1y')}
+            className="bg-slate-700 text-white text-sm rounded-lg px-3 py-2 border border-white/10 cursor-pointer hover:border-white/20 transition-colors"
+          >
+            <option value="7d">Last 7 days</option>
+            <option value="14d">Last 14 days</option>
+            <option value="1m">Last 1 month</option>
+            <option value="1y">Last 1 year</option>
           </select>
         </div>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={monthlySalesData}>
+            <AreaChart data={salesChartData}>
               <defs>
                 <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={colors.primary} stopOpacity={0.3} />
