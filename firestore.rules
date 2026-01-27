@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Define admin emails allowlist
+    function isAdmin() {
+      return request.auth != null && 
+             request.auth.token.email in [
+               'admin@example.com',  // Replace with actual admin emails
+               'user@example.com'
+             ];
+    }
+    
+    match /sales/{saleId} {
+      allow read, write: if isAdmin();
+    }
+    
+    match /imports/{importId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
