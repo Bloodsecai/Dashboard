@@ -1,6 +1,9 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { useAuth } from '@/components/auth/AuthProvider';
 
 type Currency = 'PHP' | 'USD' | 'EUR' | 'GBP' | 'JPY' | 'SGD' | 'MYR';
 
@@ -24,18 +27,62 @@ const CurrencyContext = createContext<CurrencyContextType | undefined>(undefined
 
 export function CurrencyProvider({ children }: { children: ReactNode }) {
   const [currency, setCurrencyState] = useState<Currency>('PHP');
+  const { user, loading } = useAuth();
+  const hasFetchedRef = useRef(false);
 
+  // Fetch user's currency preference from Firestore after auth is ready
   useEffect(() => {
-    const saved = localStorage.getItem('currency') as Currency;
-    if (saved && currencyConfig[saved]) {
-      setCurrencyState(saved);
-    }
-  }, []);
+    if (loading) return;
 
-  const setCurrency = (newCurrency: Currency) => {
+    const fetchCurrencyPreference = async () => {
+      if (user?.uid) {
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userDocRef);
+
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            const savedCurrency = data?.preferences?.currency as Currency;
+            if (savedCurrency && currencyConfig[savedCurrency]) {
+              setCurrencyState(savedCurrency);
+              hasFetchedRef.current = true;
+              return;
+            }
+          }
+          // Fallback to PHP if no saved preference
+          setCurrencyState('PHP');
+        } catch (error) {
+          console.error('Error fetching currency preference:', error);
+          // Fallback to PHP on error
+          setCurrencyState('PHP');
+        }
+      } else {
+        // No user logged in, reset to default
+        setCurrencyState('PHP');
+      }
+      hasFetchedRef.current = true;
+    };
+
+    fetchCurrencyPreference();
+  }, [user, loading]);
+
+  const setCurrency = async (newCurrency: Currency) => {
     setCurrencyState(newCurrency);
-    localStorage.setItem('currency', newCurrency);
     window.dispatchEvent(new Event('currencyChange')); // Trigger re-render
+
+    // Save to Firestore if user is authenticated
+    if (user?.uid) {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        await setDoc(userDocRef, {
+          preferences: {
+            currency: newCurrency
+          }
+        }, { merge: true });
+      } catch (error) {
+        console.error('Error saving currency preference:', error);
+      }
+    }
   };
 
   const formatAmount = (amount: number): string => {

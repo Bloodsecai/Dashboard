@@ -21,8 +21,8 @@ export default function RootLayout({
     <html lang="en">
       <body className="antialiased">
         <ThemeProvider>
-          <CurrencyProvider>
-            <AuthProvider>
+          <AuthProvider>
+            <CurrencyProvider>
               <ProfileProvider>
                 <NotificationProvider>
                   {children}
@@ -38,8 +38,8 @@ export default function RootLayout({
                   />
                 </NotificationProvider>
               </ProfileProvider>
-            </AuthProvider>
-          </CurrencyProvider>
+            </CurrencyProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
