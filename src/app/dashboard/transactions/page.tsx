@@ -33,6 +33,7 @@ export default function TransactionsPage() {
   // Firestore orders state (realtime)
   const [orders, setOrders] = useState<FirestoreOrder[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
+  const [isServerReady, setIsServerReady] = useState(false);
 
   // UI state
   const [search, setSearch] = useState('');
@@ -46,12 +47,22 @@ export default function TransactionsPage() {
   const [loadingPreferences, setLoadingPreferences] = useState(true);
 
   // Realtime listener for orders collection
+  // Only render data from server (not cache) to prevent ghost rows
   useEffect(() => {
     const ordersQuery = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
 
     const unsubscribe = onSnapshot(
       ordersQuery,
       (snapshot) => {
+        // Check if this is from cache or server
+        const fromCache = snapshot.metadata.fromCache;
+
+        // If from cache and server not ready yet, skip updating state
+        // This prevents ghost rows from appearing during initial load
+        if (fromCache && !isServerReady) {
+          return;
+        }
+
         const ordersData: FirestoreOrder[] = snapshot.docs.map((doc) => {
           const data = doc.data();
           return {
@@ -67,7 +78,14 @@ export default function TransactionsPage() {
             createdAt: data.createdAt?.toDate?.() || new Date(),
           };
         });
+
         setOrders(ordersData);
+
+        // Mark server as ready once we get server data
+        if (!fromCache) {
+          setIsServerReady(true);
+        }
+
         setLoadingOrders(false);
       },
       (error) => {
@@ -78,7 +96,7 @@ export default function TransactionsPage() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [isServerReady]);
 
   // Fetch user's analytics reset timestamp on mount
   useEffect(() => {
@@ -190,7 +208,8 @@ export default function TransactionsPage() {
     }
   };
 
-  if (loadingOrders || loadingPreferences) {
+  // Show loading until server data is ready (prevents ghost rows from cache)
+  if (loadingOrders || loadingPreferences || !isServerReady) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         <LoadingSpinner size="lg" />

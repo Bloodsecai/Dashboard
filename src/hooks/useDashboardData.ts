@@ -132,51 +132,105 @@ export function useDashboardData(periodDays: number = 30) {
   const [targets, setTargets] = useState<TargetDoc>({});
   const [loading, setLoading] = useState(true);
 
+  // Track if we've received server data (not from cache)
+  // This prevents ghost rows from appearing during tab switches
+  const [isServerReady, setIsServerReady] = useState(false);
+
   // ============================================================================
   // FIRESTORE LISTENERS
+  // Only render data from server (not cache) to prevent ghost rows
   // ============================================================================
 
   useEffect(() => {
     let loadCount = 0;
+    let serverReadyCount = 0;
+
     const checkLoaded = () => {
       loadCount++;
       if (loadCount >= 4) setLoading(false);
     };
 
-    // Sales listener
+    const checkServerReady = () => {
+      serverReadyCount++;
+      // All 4 listeners have received server data
+      if (serverReadyCount >= 4) setIsServerReady(true);
+    };
+
+    // Sales listener - only update state when server data arrives
     const unsubSales = onSnapshot(collection(db, 'sales'), (snapshot) => {
+      const fromCache = snapshot.metadata.fromCache;
+
+      // Skip cached data on initial load to prevent ghost rows
+      if (fromCache && !isServerReady) {
+        return;
+      }
+
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       } as RawSaleDoc));
       setRawSales(data);
+
+      if (!fromCache) {
+        checkServerReady();
+      }
       checkLoaded();
     });
 
     // Activities listener
     const unsubActivities = onSnapshot(collection(db, 'activities'), (snapshot) => {
+      const fromCache = snapshot.metadata.fromCache;
+
+      if (fromCache && !isServerReady) {
+        return;
+      }
+
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       } as ActivityDoc));
       setActivities(data);
+
+      if (!fromCache) {
+        checkServerReady();
+      }
       checkLoaded();
     });
 
     // Customers listener
     const unsubCustomers = onSnapshot(collection(db, 'customers'), (snapshot) => {
+      const fromCache = snapshot.metadata.fromCache;
+
+      if (fromCache && !isServerReady) {
+        return;
+      }
+
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       } as CustomerDoc));
       setCustomers(data);
+
+      if (!fromCache) {
+        checkServerReady();
+      }
       checkLoaded();
     });
 
     // Targets listener
     const unsubTargets = onSnapshot(collection(db, 'targets'), (snapshot) => {
+      const fromCache = snapshot.metadata.fromCache;
+
+      if (fromCache && !isServerReady) {
+        return;
+      }
+
       if (!snapshot.empty) {
         setTargets(snapshot.docs[0].data() as TargetDoc);
+      }
+
+      if (!fromCache) {
+        checkServerReady();
       }
       checkLoaded();
     });
@@ -187,7 +241,7 @@ export function useDashboardData(periodDays: number = 30) {
       unsubCustomers();
       unsubTargets();
     };
-  }, []);
+  }, [isServerReady]);
 
   // ============================================================================
   // NORMALIZE ALL SALES (SINGLE SOURCE OF TRUTH)
@@ -424,6 +478,9 @@ export function useDashboardData(periodDays: number = 30) {
 
     // Loading state
     loading,
+
+    // Server ready state (prevents ghost rows from cache)
+    isServerReady,
 
     // Raw counts for debugging/verification
     salesCount: rawSales.length,

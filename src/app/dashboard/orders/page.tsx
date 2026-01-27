@@ -16,7 +16,7 @@ import { format } from 'date-fns';
 type StatusFilter = 'all' | 'paid' | 'pending' | 'refunded';
 
 export default function OrdersPage() {
-  const { normalizedSales, loading } = useDashboardData(365);
+  const { normalizedSales, loading, isServerReady } = useDashboardData(365);
   const { formatAmount } = useCurrency();
   const { user } = useAuth();
   const [search, setSearch] = useState('');
@@ -139,7 +139,8 @@ export default function OrdersPage() {
     return styles[status] || styles.pending;
   };
 
-  if (loading || loadingPreferences) {
+  // Show loading until server data is ready (prevents ghost rows from cache)
+  if (loading || loadingPreferences || !isServerReady) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         <LoadingSpinner size="lg" />
