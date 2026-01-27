@@ -41,6 +41,9 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
 } from 'recharts';
 
 // Order type from Firestore
@@ -91,52 +94,172 @@ function StatCard({
   );
 }
 
-// Sales Report Bar Chart
-function SalesReportChart({ data }: { data: { name: string; value: number; color: string }[] }) {
-  const maxValue = Math.max(...data.map(d => d.value), 1);
-  return (
-    <div className="space-y-4">
-      {data.map((item, index) => (
-        <div key={index}>
-          <div className="flex justify-between text-sm mb-2">
-            <span className="text-slate-300">{item.name}</span>
-            <span className="text-white font-medium">${item.value.toLocaleString()}</span>
-          </div>
-          <div className="h-3 bg-slate-700 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${(item.value / maxValue) * 100}%`,
-                background: item.color,
-              }}
-            />
-          </div>
+// Sales Report Donut Chart
+function SalesReportDonut({
+  data,
+  colors,
+  formatAmount,
+}: {
+  data: { name: string; value: number }[];
+  colors: { primary: string; secondary: string; accent: string };
+  formatAmount: (amount: number) => string;
+}) {
+  const total = data.reduce((sum, item) => sum + item.value, 0);
+  const chartColors = [colors.primary, colors.secondary, colors.accent];
+
+  // Filter out zero values for the pie but keep all for legend
+  const chartData = data.filter((item) => item.value > 0);
+
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-slate-800 border border-white/10 rounded-lg px-3 py-2 shadow-xl">
+          <p className="text-slate-300 text-sm">{payload[0].name}</p>
+          <p className="text-white font-semibold">{formatAmount(payload[0].value)}</p>
         </div>
-      ))}
+      );
+    }
+    return null;
+  };
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative w-full h-48">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={chartData.length > 0 ? chartData : [{ name: 'No Data', value: 1 }]}
+              cx="50%"
+              cy="50%"
+              innerRadius={55}
+              outerRadius={80}
+              paddingAngle={chartData.length > 1 ? 4 : 0}
+              dataKey="value"
+              cornerRadius={4}
+              stroke="none"
+            >
+              {chartData.length > 0 ? (
+                chartData.map((entry, index) => {
+                  const originalIndex = data.findIndex((d) => d.name === entry.name);
+                  return (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={chartColors[originalIndex % chartColors.length]}
+                    />
+                  );
+                })
+              ) : (
+                <Cell fill="#475569" />
+              )}
+            </Pie>
+            <Tooltip content={<CustomTooltip />} />
+          </PieChart>
+        </ResponsiveContainer>
+        {/* Center Label */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-slate-400 text-xs">Total</span>
+          <span className="text-white font-bold text-lg">{formatAmount(total)}</span>
+        </div>
+      </div>
+      {/* Legend */}
+      <div className="w-full mt-4 space-y-2">
+        {data.map((item, index) => (
+          <div key={item.name} className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div
+                className="w-3 h-3 rounded-full"
+                style={{ backgroundColor: chartColors[index % chartColors.length] }}
+              />
+              <span className="text-slate-300 text-sm">{item.name}</span>
+            </div>
+            <span className="text-white font-medium text-sm">{formatAmount(item.value)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-// Traffic Analytics
-function TrafficAnalytics({ data }: { data: { name: string; views: string; percentage: number }[] }) {
-  return (
-    <div className="space-y-4">
-      {data.map((item, index) => (
-        <div key={index} className="flex items-center gap-4">
-          <div className="flex-1">
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-slate-300">{item.name}</span>
-              <span className="text-white font-medium">{item.views}</span>
-            </div>
-            <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full bg-gradient-primary"
-                style={{ width: `${item.percentage}%` }}
-              />
-            </div>
-          </div>
+// Traffic Analytics Donut Chart
+function TrafficAnalyticsDonut({
+  data,
+  colors,
+}: {
+  data: { name: string; views: number }[];
+  colors: { primary: string; secondary: string; accent: string };
+}) {
+  const total = data.reduce((sum, item) => sum + item.views, 0);
+  const chartColors = [colors.primary, colors.secondary, colors.accent];
+
+  // Filter out zero values for the pie but keep all for legend
+  const chartData = data.filter((item) => item.views > 0);
+
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-slate-800 border border-white/10 rounded-lg px-3 py-2 shadow-xl">
+          <p className="text-slate-300 text-sm">{payload[0].name}</p>
+          <p className="text-white font-semibold">{payload[0].value.toLocaleString()} views</p>
         </div>
-      ))}
+      );
+    }
+    return null;
+  };
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative w-full h-48">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={chartData.length > 0 ? chartData : [{ name: 'No Data', views: 1 }]}
+              cx="50%"
+              cy="50%"
+              innerRadius={55}
+              outerRadius={80}
+              paddingAngle={chartData.length > 1 ? 4 : 0}
+              dataKey="views"
+              cornerRadius={4}
+              stroke="none"
+            >
+              {chartData.length > 0 ? (
+                chartData.map((entry, index) => {
+                  const originalIndex = data.findIndex((d) => d.name === entry.name);
+                  return (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={chartColors[originalIndex % chartColors.length]}
+                    />
+                  );
+                })
+              ) : (
+                <Cell fill="#475569" />
+              )}
+            </Pie>
+            <Tooltip content={<CustomTooltip />} />
+          </PieChart>
+        </ResponsiveContainer>
+        {/* Center Label */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-slate-400 text-xs">Total</span>
+          <span className="text-white font-bold text-lg">{total.toLocaleString()}</span>
+        </div>
+      </div>
+      {/* Legend */}
+      <div className="w-full mt-4 space-y-2">
+        {data.map((item, index) => (
+          <div key={item.name} className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div
+                className="w-3 h-3 rounded-full"
+                style={{ backgroundColor: chartColors[index % chartColors.length] }}
+              />
+              <span className="text-slate-300 text-sm">{item.name}</span>
+            </div>
+            <span className="text-white font-medium text-sm">{item.views.toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -368,31 +491,18 @@ export default function DashboardPage() {
   const salesByPlatform = useMemo(() => {
     const totalAmount = stats.totalRevenue;
     return [
-      {
-        name: 'Shopping',
-        value: totalAmount,
-        color: `linear-gradient(90deg, ${colors.primary}, ${colors.secondary})`,
-      },
-      {
-        name: 'Website',
-        value: totalAmount,
-        color: `linear-gradient(90deg, ${colors.secondary}, #6366f1)`,
-      },
-      {
-        name: 'Others',
-        value: 0,
-        color: 'linear-gradient(90deg, #6366f1, #3b82f6)',
-      },
+      { name: 'Shopping', value: totalAmount },
+      { name: 'Website', value: totalAmount },
+      { name: 'Others', value: 0 },
     ];
-  }, [stats.totalRevenue, colors]);
+  }, [stats.totalRevenue]);
 
   // Traffic data
   const trafficData = useMemo(() => {
-    const hasData = stats.totalTransactions > 0;
     return [
-      { name: 'Website', views: hasData ? `${stats.totalTransactions}` : '0', percentage: hasData ? 80 : 0 },
-      { name: 'Instagram Ads', views: '0', percentage: 0 },
-      { name: 'Facebook Ads', views: '0', percentage: 0 },
+      { name: 'Website', views: stats.totalTransactions },
+      { name: 'Instagram Ads', views: 0 },
+      { name: 'Facebook Ads', views: 0 },
     ];
   }, [stats.totalTransactions]);
 
@@ -581,7 +691,7 @@ export default function DashboardPage() {
             <h2 className="text-lg font-semibold text-white">Sales Report</h2>
             <BarChart3 className="w-5 h-5 text-slate-400" />
           </div>
-          <SalesReportChart data={salesByPlatform} />
+          <SalesReportDonut data={salesByPlatform} colors={colors} formatAmount={formatAmount} />
         </div>
 
         {/* Traffic Analytics */}
@@ -592,7 +702,7 @@ export default function DashboardPage() {
               <p className="text-slate-400 text-sm">Total views from platforms</p>
             </div>
           </div>
-          <TrafficAnalytics data={trafficData} />
+          <TrafficAnalyticsDonut data={trafficData} colors={colors} />
         </div>
 
         {/* Popular Products */}
