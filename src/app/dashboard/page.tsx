@@ -12,6 +12,8 @@ import {
   Plus,
   Package,
   ImageOff,
+  PieChart as PieChartIcon,
+  List,
 } from 'lucide-react';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { useTheme, COLOR_PALETTES } from '@/contexts/ThemeContext';
@@ -264,6 +266,103 @@ function TrafficAnalyticsDonut({
   );
 }
 
+// Sales Report Standard Bar View
+function SalesReportStandard({
+  data,
+  colors,
+  formatAmount,
+}: {
+  data: { name: string; value: number }[];
+  colors: { primary: string; secondary: string; accent: string };
+  formatAmount: (amount: number) => string;
+}) {
+  const maxValue = Math.max(...data.map((d) => d.value), 1);
+  const chartColors = [colors.primary, colors.secondary, colors.accent];
+
+  return (
+    <div className="space-y-4">
+      {data.map((item, index) => (
+        <div key={item.name}>
+          <div className="flex justify-between text-sm mb-2">
+            <span className="text-slate-300">{item.name}</span>
+            <span className="text-white font-medium">{formatAmount(item.value)}</span>
+          </div>
+          <div className="h-3 bg-slate-700 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${(item.value / maxValue) * 100}%`,
+                backgroundColor: chartColors[index % chartColors.length],
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Traffic Analytics Standard Bar View
+function TrafficAnalyticsStandard({
+  data,
+  colors,
+}: {
+  data: { name: string; views: number }[];
+  colors: { primary: string; secondary: string; accent: string };
+}) {
+  const maxValue = Math.max(...data.map((d) => d.views), 1);
+  const chartColors = [colors.primary, colors.secondary, colors.accent];
+
+  return (
+    <div className="space-y-4">
+      {data.map((item, index) => (
+        <div key={item.name}>
+          <div className="flex justify-between text-sm mb-2">
+            <span className="text-slate-300">{item.name}</span>
+            <span className="text-white font-medium">{item.views.toLocaleString()}</span>
+          </div>
+          <div className="h-3 bg-slate-700 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${(item.views / maxValue) * 100}%`,
+                backgroundColor: chartColors[index % chartColors.length],
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// View Toggle Button Component
+function ViewToggleButton({
+  isDonut,
+  onToggle,
+}: {
+  isDonut: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      className="p-2 rounded-lg bg-slate-700/50 border border-white/10 hover:border-white/20 hover:bg-slate-700 transition-all group relative"
+      title={isDonut ? 'View Standard' : 'View Donut'}
+    >
+      {isDonut ? (
+        <List className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
+      ) : (
+        <PieChartIcon className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
+      )}
+      {/* Tooltip */}
+      <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-slate-900 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+        {isDonut ? 'View Standard' : 'View Donut'}
+      </span>
+    </button>
+  );
+}
+
 // Product Image Component with fallback
 function ProductThumbnail({ src, alt }: { src?: string; alt: string }) {
   const [error, setError] = useState(false);
@@ -303,6 +402,10 @@ export default function DashboardPage() {
   const [loadingPreferences, setLoadingPreferences] = useState(true);
   const [isGeneratingOrder, setIsGeneratingOrder] = useState(false);
   const [salesTimeRange, setSalesTimeRange] = useState<'7d' | '14d' | '1m' | '1y'>('1y');
+
+  // View toggle state (purely presentational - does not affect data)
+  const [salesReportView, setSalesReportView] = useState<'donut' | 'standard'>('donut');
+  const [trafficAnalyticsView, setTrafficAnalyticsView] = useState<'donut' | 'standard'>('donut');
 
   // Realtime listener for orders collection
   useEffect(() => {
@@ -689,9 +792,19 @@ export default function DashboardPage() {
         <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl p-6 border border-white/10">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold text-white">Sales Report</h2>
-            <BarChart3 className="w-5 h-5 text-slate-400" />
+            <div className="flex items-center gap-2">
+              <ViewToggleButton
+                isDonut={salesReportView === 'donut'}
+                onToggle={() => setSalesReportView(salesReportView === 'donut' ? 'standard' : 'donut')}
+              />
+              <BarChart3 className="w-5 h-5 text-slate-400" />
+            </div>
           </div>
-          <SalesReportDonut data={salesByPlatform} colors={colors} formatAmount={formatAmount} />
+          {salesReportView === 'donut' ? (
+            <SalesReportDonut data={salesByPlatform} colors={colors} formatAmount={formatAmount} />
+          ) : (
+            <SalesReportStandard data={salesByPlatform} colors={colors} formatAmount={formatAmount} />
+          )}
         </div>
 
         {/* Traffic Analytics */}
@@ -701,8 +814,16 @@ export default function DashboardPage() {
               <h2 className="text-lg font-semibold text-white">Traffic Analytics</h2>
               <p className="text-slate-400 text-sm">Total views from platforms</p>
             </div>
+            <ViewToggleButton
+              isDonut={trafficAnalyticsView === 'donut'}
+              onToggle={() => setTrafficAnalyticsView(trafficAnalyticsView === 'donut' ? 'standard' : 'donut')}
+            />
           </div>
-          <TrafficAnalyticsDonut data={trafficData} colors={colors} />
+          {trafficAnalyticsView === 'donut' ? (
+            <TrafficAnalyticsDonut data={trafficData} colors={colors} />
+          ) : (
+            <TrafficAnalyticsStandard data={trafficData} colors={colors} />
+          )}
         </div>
 
         {/* Popular Products */}
