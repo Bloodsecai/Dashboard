@@ -225,16 +225,24 @@ export default function DashboardPage() {
       const product = TEST_PRODUCTS[Math.floor(Math.random() * TEST_PRODUCTS.length)];
       const customer = TEST_CUSTOMERS[Math.floor(Math.random() * TEST_CUSTOMERS.length)];
       const quantity = Math.floor(Math.random() * 3) + 1;
+      const totalAmount = product.price * quantity;
 
       // Random date within last 60 days
       const daysAgo = Math.floor(Math.random() * 60);
       const orderDate = new Date();
       orderDate.setDate(orderDate.getDate() - daysAgo);
 
-      const orderData = {
+      const orderTimestamp = Timestamp.fromDate(orderDate);
+      const orderId = `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      // Base order data with placeholder image
+      const baseOrderData = {
+        orderId: orderId,
         product: product.name,
         category: product.category,
-        amount: product.price * quantity,
+        image: 'https://picsum.photos/400',
+        amount: totalAmount,
+        price: product.price,
         quantity: quantity,
         customer: customer,
         customerName: customer,
@@ -242,11 +250,22 @@ export default function DashboardPage() {
         source: 'manual',
         location: ['CA', 'NY', 'TX', 'FL', 'IL'][Math.floor(Math.random() * 5)],
         notes: `Test order - ${quantity}x ${product.name}`,
-        createdAt: Timestamp.fromDate(orderDate),
-        date: Timestamp.fromDate(orderDate),
+        createdAt: orderTimestamp,
+        date: orderTimestamp,
+        userId: user.uid,
       };
 
-      await addDoc(collection(db, 'sales'), orderData);
+      // Write to all three collections: orders, transactions, sales
+      await Promise.all([
+        addDoc(collection(db, 'orders'), baseOrderData),
+        addDoc(collection(db, 'transactions'), {
+          ...baseOrderData,
+          type: 'sale',
+          paymentMethod: ['Credit Card', 'Bank Transfer', 'PayPal', 'Cash'][Math.floor(Math.random() * 4)],
+        }),
+        addDoc(collection(db, 'sales'), baseOrderData),
+      ]);
+
       toast.success(`Test order created: ${quantity}x ${product.name}`);
     } catch (error) {
       console.error('Error generating test order:', error);
