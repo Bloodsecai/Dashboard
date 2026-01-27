@@ -1,22 +1,102 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { Search, Download, CreditCard, DollarSign } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Search, Download, CreditCard, DollarSign, Trash2, Receipt } from 'lucide-react';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { useCurrency } from '@/contexts/CurrencyContext';
+import { useAuth } from '@/hooks/useAuth';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { toast } from 'sonner';
 import { format } from 'date-fns';
 
 export default function TransactionsPage() {
   const { normalizedSales, loading } = useDashboardData(365);
   const { formatAmount } = useCurrency();
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
 
+  // Clear transactions state
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [analyticsResetTimestamp, setAnalyticsResetTimestamp] = useState<Date | null>(null);
+  const [loadingPreferences, setLoadingPreferences] = useState(true);
+
+  // Fetch user's analytics reset timestamp on mount
+  useEffect(() => {
+    const fetchAnalyticsPreference = async () => {
+      if (!user?.uid) {
+        setLoadingPreferences(false);
+        return;
+      }
+
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userDocRef);
+
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          const resetTimestamp = data?.preferences?.analyticsResetTimestamp;
+          if (resetTimestamp) {
+            setAnalyticsResetTimestamp(resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp));
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching analytics preference:', error);
+      } finally {
+        setLoadingPreferences(false);
+      }
+    };
+
+    fetchAnalyticsPreference();
+  }, [user]);
+
+  // Clear transactions handler (uses same analyticsResetTimestamp as dashboard)
+  const handleClearTransactions = async () => {
+    if (!user?.uid) {
+      toast.error('You must be logged in to clear transactions.');
+      return;
+    }
+
+    setIsClearing(true);
+    try {
+      const now = new Date();
+      const userDocRef = doc(db, 'users', user.uid);
+      await setDoc(userDocRef, {
+        preferences: {
+          analyticsResetTimestamp: now
+        }
+      }, { merge: true });
+
+      setAnalyticsResetTimestamp(now);
+      setShowClearModal(false);
+      setCurrentPage(1);
+      toast.success('Transactions cleared.');
+    } catch (error) {
+      console.error('Error clearing transactions:', error);
+      toast.error('Failed to clear transactions.');
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  // Filter transactions based on analytics reset timestamp
+  const filteredSales = useMemo(() => {
+    if (!analyticsResetTimestamp) return normalizedSales;
+    return normalizedSales.filter(s => {
+      const saleDate = new Date(s.date);
+      return saleDate > analyticsResetTimestamp;
+    });
+  }, [normalizedSales, analyticsResetTimestamp]);
+
   // Only show completed transactions (paid status)
   const completedTransactions = useMemo(() => {
-    let transactions = normalizedSales.filter(s => s.status === 'paid');
+    let transactions = filteredSales.filter(s => s.status === 'paid');
 
     // Search filter
     if (search) {
@@ -32,7 +112,7 @@ export default function TransactionsPage() {
     transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return transactions;
-  }, [normalizedSales, search]);
+  }, [filteredSales, search]);
 
   // Calculate totals
   const totalAmount = completedTransactions.reduce((sum, t) => sum + t.amount, 0);
@@ -51,7 +131,7 @@ export default function TransactionsPage() {
     return paymentMethods[index];
   };
 
-  if (loading) {
+  if (loading || loadingPreferences) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         <LoadingSpinner size="lg" />
@@ -62,15 +142,25 @@ export default function TransactionsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">Transactions</h1>
           <p className="text-slate-400 mt-1">Completed payment transactions</p>
         </div>
-        <button className="flex items-center gap-2 px-6 py-3 bg-slate-700/50 border border-white/10 text-white rounded-xl font-medium hover:bg-slate-700 transition-colors">
-          <Download className="w-5 h-5" />
-          Export
-        </button>
+        <div className="flex flex-wrap gap-3">
+          <button className="flex items-center gap-2 px-6 py-3 bg-slate-700/50 border border-white/10 text-white rounded-xl font-medium hover:bg-slate-700 transition-colors">
+            <Download className="w-5 h-5" />
+            Export
+          </button>
+          <Button
+            variant="secondary"
+            icon={Trash2}
+            onClick={() => setShowClearModal(true)}
+            className="border-red-500/30 hover:border-red-500/50 hover:bg-red-500/10 text-red-400"
+          >
+            Clear All Transactions
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -99,7 +189,7 @@ export default function TransactionsPage() {
         </div>
         <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl border border-white/10 p-6">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
+            <div className="w-12 h-12 bg-gradient-primary rounded-xl flex items-center justify-center">
               <DollarSign className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -124,7 +214,7 @@ export default function TransactionsPage() {
               setSearch(e.target.value);
               setCurrentPage(1);
             }}
-            className="w-full pl-12 pr-4 py-3 bg-slate-700/50 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-pink-500/50"
+            className="w-full pl-12 pr-4 py-3 bg-slate-700/50 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-primary-accent/50"
           />
         </div>
       </div>
@@ -176,8 +266,16 @@ export default function TransactionsPage() {
 
               {paginatedTransactions.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center">
-                    <p className="text-slate-400">No transactions found</p>
+                  <td colSpan={6} className="px-6 py-16 text-center">
+                    <div className="flex flex-col items-center">
+                      <div className="w-16 h-16 bg-slate-700/50 rounded-2xl flex items-center justify-center mb-4">
+                        <Receipt className="w-8 h-8 text-slate-500" />
+                      </div>
+                      <p className="text-slate-400 text-lg mb-2">No transactions yet</p>
+                      <p className="text-slate-500 text-sm">
+                        {search ? 'Try a different search term' : 'Transactions will appear here once orders are completed'}
+                      </p>
+                    </div>
                   </td>
                 </tr>
               )}
@@ -199,7 +297,7 @@ export default function TransactionsPage() {
               >
                 Previous
               </button>
-              <span className="px-4 py-2 bg-pink-500/20 text-pink-400 rounded-lg font-medium">
+              <span className="px-4 py-2 bg-primary-accent/20 text-primary-accent rounded-lg font-medium">
                 {currentPage}
               </span>
               <button
@@ -213,6 +311,39 @@ export default function TransactionsPage() {
           </div>
         )}
       </div>
+
+      {/* Clear Transactions Confirmation Modal */}
+      <Modal
+        isOpen={showClearModal}
+        onClose={() => setShowClearModal(false)}
+        title="Clear Transactions?"
+        size="sm"
+      >
+        <div className="space-y-6">
+          <p className="text-slate-300">
+            Are you sure you want to clear all transaction analytics?
+          </p>
+          <p className="text-sm text-slate-400">
+            This will reset dashboard calculations but will not delete Firestore records. Your original data remains safe.
+          </p>
+          <div className="flex gap-3 justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => setShowClearModal(false)}
+              disabled={isClearing}
+            >
+              Back
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleClearTransactions}
+              loading={isClearing}
+            >
+              Yes, Clear
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

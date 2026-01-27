@@ -8,6 +8,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Button } from '@/components/ui/Button';
+import { useTheme, COLOR_PALETTES } from '@/contexts/ThemeContext';
 import { Mail, Lock, Sparkles, ArrowRight } from 'lucide-react';
 
 const loginSchema = z.object({
@@ -21,6 +22,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const router = useRouter();
+  const { palette } = useTheme();
+  const colors = COLOR_PALETTES[palette];
 
   const {
     register,
@@ -46,12 +49,21 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Animated Background Elements */}
+      {/* Animated Background Elements - Using dynamic theme colors */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {/* Gradient orbs */}
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary-purple/20 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-primary-pink/15 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary-violet/10 rounded-full blur-3xl" />
+        <div
+          className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full blur-3xl animate-pulse"
+          style={{ backgroundColor: `rgba(${colors.primaryRgb}, 0.2)` }}
+        />
+        <div
+          className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full blur-3xl animate-pulse"
+          style={{ backgroundColor: `rgba(${colors.secondaryRgb}, 0.15)`, animationDelay: '1s' }}
+        />
+        <div
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full blur-3xl"
+          style={{ backgroundColor: `rgba(${colors.primaryRgb}, 0.1)` }}
+        />
 
         {/* Grid pattern */}
         <div
@@ -69,12 +81,23 @@ export default function LoginPage() {
       {/* Login Card */}
       <div className="w-full max-w-md relative z-10 animate-scale-in">
         <div className="glass-strong rounded-3xl p-8 shadow-2xl border border-white/10 relative overflow-hidden">
-          {/* Gradient top border */}
-          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary-purple via-primary-pink to-primary-purple" />
+          {/* Gradient top border - Using dynamic theme colors */}
+          <div
+            className="absolute top-0 left-0 right-0 h-1"
+            style={{
+              background: `linear-gradient(90deg, ${colors.primary}, ${colors.secondary}, ${colors.primary})`
+            }}
+          />
 
           {/* Logo and Header */}
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-purple to-primary-pink mb-6 shadow-glow-md animate-float">
+            <div
+              className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-6 shadow-lg animate-float"
+              style={{
+                background: `linear-gradient(135deg, ${colors.primary}, ${colors.secondary})`,
+                boxShadow: `0 10px 40px -10px rgba(${colors.primaryRgb}, 0.5)`
+              }}
+            >
               <Sparkles className="w-8 h-8 text-white" />
             </div>
             <h1 className="text-2xl font-bold text-white mb-2">
@@ -99,7 +122,18 @@ export default function LoginPage() {
                   type="email"
                   placeholder="you@company.com"
                   {...register('email')}
-                  className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-text-muted transition-all duration-300 focus:outline-none focus:border-primary-purple/50 focus:bg-white/[0.07] focus:shadow-[0_0_0_3px_rgba(124,58,237,0.1)]"
+                  className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-text-muted transition-all duration-300 focus:outline-none focus:border-primary-accent/50 focus:bg-white/[0.07]"
+                  style={{
+                    boxShadow: 'none',
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.boxShadow = `0 0 0 3px rgba(${colors.primaryRgb}, 0.1)`;
+                    e.target.style.borderColor = colors.primary;
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.boxShadow = 'none';
+                    e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                  }}
                 />
               </div>
               {errors.email && (
@@ -125,7 +159,18 @@ export default function LoginPage() {
                   type="password"
                   placeholder="Enter your password"
                   {...register('password')}
-                  className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-text-muted transition-all duration-300 focus:outline-none focus:border-primary-purple/50 focus:bg-white/[0.07] focus:shadow-[0_0_0_3px_rgba(124,58,237,0.1)]"
+                  className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-text-muted transition-all duration-300 focus:outline-none focus:border-primary-accent/50 focus:bg-white/[0.07]"
+                  style={{
+                    boxShadow: 'none',
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.boxShadow = `0 0 0 3px rgba(${colors.primaryRgb}, 0.1)`;
+                    e.target.style.borderColor = colors.primary;
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.boxShadow = 'none';
+                    e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                  }}
                 />
               </div>
               {errors.password && (
@@ -143,7 +188,8 @@ export default function LoginPage() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  className="w-4 h-4 rounded bg-white/5 border-white/20 text-primary-purple focus:ring-primary-purple/30"
+                  className="w-4 h-4 rounded bg-white/5 border-white/20 focus:ring-primary-accent/30"
+                  style={{ accentColor: colors.primary }}
                 />
                 <span className="text-sm text-text-secondary">Remember me</span>
               </label>
@@ -178,7 +224,17 @@ export default function LoginPage() {
           <div className="mt-8 pt-6 border-t border-white/10 text-center">
             <p className="text-sm text-text-muted">
               Created By{' '}
-              <span className="gradient-text font-semibold">Macky Mercado</span>
+              <span
+                className="font-semibold"
+                style={{
+                  background: `linear-gradient(135deg, ${colors.primary}, ${colors.secondary})`,
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  backgroundClip: 'text',
+                }}
+              >
+                Macky Mercado
+              </span>
             </p>
           </div>
         </div>

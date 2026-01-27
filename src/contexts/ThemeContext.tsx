@@ -6,7 +6,9 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { db, auth } from '@/lib/firebase';
 
 type Theme = 'light' | 'dark';
-type ColorPalette = 'purple' | 'blue' | 'emerald' | 'rose' | 'orange' | 'indigo';
+export type ColorPalette = 'purple' | 'blue' | 'emerald' | 'rose' | 'orange' | 'indigo';
+
+const PALETTE_STORAGE_KEY = 'selectedPalette';
 
 // Color palette definitions with primary and secondary colors
 export const COLOR_PALETTES: Record<ColorPalette, {
@@ -93,15 +95,23 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.style.setProperty('--color-secondary-rgb', colors.secondaryRgb);
   }, []);
 
-  // Load theme from localStorage
+  // Load theme and palette from localStorage on mount (for guests and initial load)
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') as Theme;
     if (savedTheme) {
       setTheme(savedTheme);
       document.documentElement.classList.toggle('light', savedTheme === 'light');
     }
-    // Apply default palette immediately
-    applyPalette('purple');
+
+    // Load palette from localStorage (for guests or before auth loads)
+    const savedPalette = localStorage.getItem(PALETTE_STORAGE_KEY) as ColorPalette;
+    if (savedPalette && COLOR_PALETTES[savedPalette]) {
+      setPaletteState(savedPalette);
+      applyPalette(savedPalette);
+    } else {
+      // Apply default palette immediately
+      applyPalette('purple');
+    }
   }, [applyPalette]);
 
   // Listen for auth state changes
@@ -112,7 +122,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, []);
 
-  // Load palette from Firestore when user is available
+  // Load palette from Firestore when user is available (overrides localStorage)
   useEffect(() => {
     const loadPalette = async () => {
       if (!currentUser?.uid) {
@@ -130,6 +140,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           if (savedPalette && COLOR_PALETTES[savedPalette]) {
             setPaletteState(savedPalette);
             applyPalette(savedPalette);
+            // Sync to localStorage
+            try {
+              localStorage.setItem(PALETTE_STORAGE_KEY, savedPalette);
+            } catch (e) {
+              // Ignore localStorage errors
+            }
           }
         }
       } catch (error) {
@@ -155,6 +171,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     // Apply immediately for instant feedback
     setPaletteState(newPalette);
     applyPalette(newPalette);
+
+    // Always save to localStorage for persistence (works for guests too)
+    try {
+      localStorage.setItem(PALETTE_STORAGE_KEY, newPalette);
+    } catch (error) {
+      console.error('Error saving palette to localStorage:', error);
+    }
 
     // Save to Firestore if user is logged in
     if (currentUser?.uid) {
