@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import {
   DollarSign,
@@ -11,10 +11,17 @@ import {
   TrendingDown,
   ArrowRight,
   BarChart3,
+  Trash2,
 } from 'lucide-react';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { useAuth } from '@/hooks/useAuth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { toast } from 'sonner';
 import {
   AreaChart,
   Area,
@@ -66,6 +73,7 @@ function StatCard({
 
 // Sales Report Bar Chart
 function SalesReportChart({ data }: { data: { name: string; value: number; color: string }[] }) {
+  const maxValue = Math.max(...data.map(d => d.value), 1); // Prevent division by zero
   return (
     <div className="space-y-4">
       {data.map((item, index) => (
@@ -78,7 +86,7 @@ function SalesReportChart({ data }: { data: { name: string; value: number; color
             <div
               className="h-full rounded-full transition-all duration-500"
               style={{
-                width: `${(item.value / Math.max(...data.map(d => d.value))) * 100}%`,
+                width: `${(item.value / maxValue) * 100}%`,
                 background: item.color,
               }}
             />
@@ -116,15 +124,88 @@ function TrafficAnalytics({ data }: { data: { name: string; views: string; perce
 export default function DashboardPage() {
   const { metrics, weeklySales, productSales, loading, normalizedSales } = useDashboardData(30);
   const { formatAmount } = useCurrency();
+  const { user } = useAuth();
 
-  // Calculate stats from Firebase data
+  // Clear analytics state
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [analyticsResetTimestamp, setAnalyticsResetTimestamp] = useState<Date | null>(null);
+  const [loadingPreferences, setLoadingPreferences] = useState(true);
+
+  // Fetch user's analytics reset timestamp on mount
+  useEffect(() => {
+    const fetchAnalyticsPreference = async () => {
+      if (!user?.uid) {
+        setLoadingPreferences(false);
+        return;
+      }
+
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userDocRef);
+
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          const resetTimestamp = data?.preferences?.analyticsResetTimestamp;
+          if (resetTimestamp) {
+            setAnalyticsResetTimestamp(resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp));
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching analytics preference:', error);
+      } finally {
+        setLoadingPreferences(false);
+      }
+    };
+
+    fetchAnalyticsPreference();
+  }, [user]);
+
+  // Clear analytics handler
+  const handleClearAnalytics = async () => {
+    if (!user?.uid) {
+      toast.error('You must be logged in to clear analytics.');
+      return;
+    }
+
+    setIsClearing(true);
+    try {
+      const now = new Date();
+      const userDocRef = doc(db, 'users', user.uid);
+      await setDoc(userDocRef, {
+        preferences: {
+          analyticsResetTimestamp: now
+        }
+      }, { merge: true });
+
+      setAnalyticsResetTimestamp(now);
+      setShowClearModal(false);
+      toast.success('Analytics cleared.');
+    } catch (error) {
+      console.error('Error clearing analytics:', error);
+      toast.error('Failed to clear analytics.');
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  // Filter sales based on analytics reset timestamp
+  const filteredSales = useMemo(() => {
+    if (!analyticsResetTimestamp) return normalizedSales;
+    return normalizedSales.filter(s => {
+      const saleDate = new Date(s.date);
+      return saleDate > analyticsResetTimestamp;
+    });
+  }, [normalizedSales, analyticsResetTimestamp]);
+
+  // Calculate stats from filtered Firebase data
   const stats = useMemo(() => {
-    const totalRevenue = normalizedSales
+    const totalRevenue = filteredSales
       .filter(s => s.status === 'paid')
       .reduce((sum, s) => sum + s.amount, 0);
 
-    const totalTransactions = normalizedSales.length;
-    const uniqueCustomers = new Set(normalizedSales.map(s => s.customer)).size;
+    const totalTransactions = filteredSales.length;
+    const uniqueCustomers = new Set(filteredSales.map(s => s.customer)).size;
 
     return {
       totalRevenue,
@@ -132,7 +213,7 @@ export default function DashboardPage() {
       productViewed: Math.floor(totalTransactions * 7), // Estimate
       uniqueUsers: uniqueCustomers,
     };
-  }, [normalizedSales]);
+  }, [filteredSales]);
 
   // Sales by platform data
   const salesByPlatform = useMemo(() => [
@@ -142,12 +223,15 @@ export default function DashboardPage() {
     { name: 'Alibaba', value: stats.totalRevenue * 0.10, color: 'linear-gradient(90deg, #3b82f6, #06b6d4)' },
   ], [stats.totalRevenue]);
 
-  // Traffic data
-  const trafficData = [
-    { name: 'Website', views: '100k', percentage: 80 },
-    { name: 'Instagram Ads', views: '52k', percentage: 45 },
-    { name: 'Facebook Ads', views: '78k', percentage: 65 },
-  ];
+  // Traffic data (calculated based on filtered sales)
+  const trafficData = useMemo(() => {
+    const hasData = filteredSales.length > 0;
+    return [
+      { name: 'Website', views: hasData ? '100k' : '0', percentage: hasData ? 80 : 0 },
+      { name: 'Instagram Ads', views: hasData ? '52k' : '0', percentage: hasData ? 45 : 0 },
+      { name: 'Facebook Ads', views: hasData ? '78k' : '0', percentage: hasData ? 65 : 0 },
+    ];
+  }, [filteredSales]);
 
   // Popular products from sales data
   const popularProducts = useMemo(() => {
@@ -162,13 +246,13 @@ export default function DashboardPage() {
       .map(([name, revenue]) => ({ name, revenue }));
   }, [normalizedSales]);
 
-  // Monthly sales chart data
+  // Monthly sales chart data (uses filtered sales for analytics reset)
   const monthlySalesData = useMemo(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const currentMonth = new Date().getMonth();
 
     return months.slice(0, currentMonth + 1).map((month, index) => {
-      const monthSales = normalizedSales.filter(s => {
+      const monthSales = filteredSales.filter(s => {
         const saleMonth = new Date(s.date).getMonth();
         return saleMonth === index && s.status === 'paid';
       });
@@ -177,9 +261,9 @@ export default function DashboardPage() {
         sales: monthSales.reduce((sum, s) => sum + s.amount, 0),
       };
     });
-  }, [normalizedSales]);
+  }, [filteredSales]);
 
-  if (loading) {
+  if (loading || loadingPreferences) {
     return (
       <div className="flex items-center justify-center w-full min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         <div className="flex flex-col items-center">
@@ -193,9 +277,19 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6">
       {/* Page Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">Overview Analytics</h1>
-        <p className="text-slate-400 mt-1">Welcome back! Here's what's happening with your store.</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Overview Analytics</h1>
+          <p className="text-slate-400 mt-1">Welcome back! Here's what's happening with your store.</p>
+        </div>
+        <Button
+          variant="secondary"
+          icon={Trash2}
+          onClick={() => setShowClearModal(true)}
+          className="self-start sm:self-auto border-red-500/30 hover:border-red-500/50 hover:bg-red-500/10 text-red-400"
+        >
+          Clear All Analytics
+        </Button>
       </div>
 
       {/* Stats Grid */}
@@ -324,6 +418,38 @@ export default function DashboardPage() {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* Clear Analytics Confirmation Modal */}
+      <Modal
+        isOpen={showClearModal}
+        onClose={() => setShowClearModal(false)}
+        title="Clear All Analytics"
+        size="sm"
+      >
+        <div className="space-y-6">
+          <p className="text-slate-300">
+            Are you sure you want to clear your analytics?
+          </p>
+          <p className="text-sm text-slate-400">
+            This will reset all analytics values to zero. Your sales records and products will remain unchanged.
+          </p>
+          <div className="flex gap-3 justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => setShowClearModal(false)}
+            >
+              Back
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleClearAnalytics}
+              loading={isClearing}
+            >
+              Yes, Clear
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
