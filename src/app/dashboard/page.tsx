@@ -233,13 +233,22 @@ export default function DashboardPage() {
     ];
   }, [filteredSales]);
 
-  // Popular products from sales data
+  // Popular products from sales data - filtered to show only Shoes category
   const popularProducts = useMemo(() => {
     const productMap = new Map<string, number>();
-    normalizedSales.forEach(sale => {
+
+    // Filter to only include sales with Shoes category (case-insensitive, includes "Shoes men", "Shoes women", etc.)
+    const shoesSales = normalizedSales.filter(sale => {
+      const category = (sale.category || '').toLowerCase().trim();
+      // Must have a category and it must start with "shoes"
+      return category && category.startsWith('shoes');
+    });
+
+    shoesSales.forEach(sale => {
       const current = productMap.get(sale.product) || 0;
       productMap.set(sale.product, current + sale.amount);
     });
+
     return Array.from(productMap.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6)

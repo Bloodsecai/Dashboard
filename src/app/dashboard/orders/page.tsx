@@ -1,10 +1,16 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { Search, Filter, ChevronDown } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Search, Filter, ChevronDown, Trash2 } from 'lucide-react';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { useAuth } from '@/hooks/useAuth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { toast } from 'sonner';
 import { format } from 'date-fns';
 
 type StatusFilter = 'all' | 'paid' | 'pending' | 'refunded';
@@ -12,14 +18,88 @@ type StatusFilter = 'all' | 'paid' | 'pending' | 'refunded';
 export default function OrdersPage() {
   const { normalizedSales, loading } = useDashboardData(365);
   const { formatAmount } = useCurrency();
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
 
+  // Clear orders state
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [ordersClearedAt, setOrdersClearedAt] = useState<Date | null>(null);
+  const [loadingPreferences, setLoadingPreferences] = useState(true);
+
+  // Fetch user's ordersClearedAt timestamp on mount
+  useEffect(() => {
+    const fetchOrdersPreference = async () => {
+      if (!user?.uid) {
+        setLoadingPreferences(false);
+        return;
+      }
+
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userDocRef);
+
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          const clearedTimestamp = data?.preferences?.ordersClearedAt;
+          if (clearedTimestamp) {
+            setOrdersClearedAt(clearedTimestamp.toDate ? clearedTimestamp.toDate() : new Date(clearedTimestamp));
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching orders preference:', error);
+      } finally {
+        setLoadingPreferences(false);
+      }
+    };
+
+    fetchOrdersPreference();
+  }, [user]);
+
+  // Clear orders handler
+  const handleClearOrders = async () => {
+    if (!user?.uid) {
+      toast.error('You must be logged in to clear orders.');
+      return;
+    }
+
+    setIsClearing(true);
+    try {
+      const now = new Date();
+      const userDocRef = doc(db, 'users', user.uid);
+      await setDoc(userDocRef, {
+        preferences: {
+          ordersClearedAt: now
+        }
+      }, { merge: true });
+
+      setOrdersClearedAt(now);
+      setShowClearModal(false);
+      setCurrentPage(1);
+      toast.success('Orders cleared.');
+    } catch (error) {
+      console.error('Error clearing orders:', error);
+      toast.error('Failed to clear orders.');
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  // Filter orders based on ordersClearedAt timestamp
+  const visibleOrders = useMemo(() => {
+    if (!ordersClearedAt) return normalizedSales;
+    return normalizedSales.filter(order => {
+      const orderDate = new Date(order.date);
+      return orderDate > ordersClearedAt;
+    });
+  }, [normalizedSales, ordersClearedAt]);
+
   // Filter and search orders
   const filteredOrders = useMemo(() => {
-    let filtered = [...normalizedSales];
+    let filtered = [...visibleOrders];
 
     // Search filter
     if (search) {
@@ -41,7 +121,7 @@ export default function OrdersPage() {
     filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return filtered;
-  }, [normalizedSales, search, statusFilter]);
+  }, [visibleOrders, search, statusFilter]);
 
   // Pagination
   const totalPages = Math.ceil(filteredOrders.length / pageSize);
@@ -59,7 +139,7 @@ export default function OrdersPage() {
     return styles[status] || styles.pending;
   };
 
-  if (loading) {
+  if (loading || loadingPreferences) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         <LoadingSpinner size="lg" />
@@ -70,9 +150,19 @@ export default function OrdersPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">Orders</h1>
-        <p className="text-slate-400 mt-1">View and manage all orders</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Orders</h1>
+          <p className="text-slate-400 mt-1">View and manage all orders</p>
+        </div>
+        <Button
+          variant="secondary"
+          icon={Trash2}
+          onClick={() => setShowClearModal(true)}
+          className="self-start sm:self-auto border-red-500/30 hover:border-red-500/50 hover:bg-red-500/10 text-red-400"
+        >
+          Clear All Orders
+        </Button>
       </div>
 
       {/* Filters */}
@@ -197,6 +287,39 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
+
+      {/* Clear Orders Confirmation Modal */}
+      <Modal
+        isOpen={showClearModal}
+        onClose={() => setShowClearModal(false)}
+        title="Clear All Orders"
+        size="sm"
+      >
+        <div className="space-y-6">
+          <p className="text-slate-300">
+            Are you sure you want to clear your orders?
+          </p>
+          <p className="text-sm text-slate-400">
+            This will hide all current orders from view. Your order records will remain in the database.
+          </p>
+          <div className="flex gap-3 justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => setShowClearModal(false)}
+              disabled={isClearing}
+            >
+              Back
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleClearOrders}
+              loading={isClearing}
+            >
+              Yes, Clear
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
