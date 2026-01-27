@@ -395,6 +395,8 @@ export default function DashboardPage() {
   const [orders, setOrders] = useState<FirestoreOrder[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [isServerReady, setIsServerReady] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [listenerKey, setListenerKey] = useState(0); // Used to force re-create listener on retry
 
   // UI state
   const [showClearModal, setShowClearModal] = useState(false);
@@ -411,7 +413,20 @@ export default function DashboardPage() {
   // Realtime listener for orders collection
   // Only render data from server (not cache) to prevent ghost rows
   useEffect(() => {
+    // Reset state when starting/retrying listener
+    let serverReadyLocal = false;
+    setLoadingOrders(true);
+    setErrorMsg(null);
+
     const ordersQuery = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+
+    // Timeout fallback: if server data doesn't arrive within 4 seconds, show error
+    const timeoutId = setTimeout(() => {
+      if (!serverReadyLocal) {
+        setLoadingOrders(false);
+        setErrorMsg("Can't reach server right now. Please retry.");
+      }
+    }, 4000);
 
     const unsubscribe = onSnapshot(
       ordersQuery,
@@ -421,7 +436,7 @@ export default function DashboardPage() {
 
         // If from cache and server not ready yet, skip updating state
         // This prevents ghost rows from appearing during initial load
-        if (fromCache && !isServerReady) {
+        if (fromCache && !serverReadyLocal) {
           return;
         }
 
@@ -445,20 +460,27 @@ export default function DashboardPage() {
 
         // Mark server as ready once we get server data
         if (!fromCache) {
+          serverReadyLocal = true;
           setIsServerReady(true);
+          clearTimeout(timeoutId);
+          setErrorMsg(null);
         }
 
         setLoadingOrders(false);
       },
       (error) => {
         console.error('Error listening to orders:', error);
-        toast.error('Failed to load orders');
+        clearTimeout(timeoutId);
+        setErrorMsg(error.message || 'Failed to load orders');
         setLoadingOrders(false);
       }
     );
 
-    return () => unsubscribe();
-  }, [isServerReady]);
+    return () => {
+      clearTimeout(timeoutId);
+      unsubscribe();
+    };
+  }, [listenerKey]);
 
   // Fetch user's analytics reset timestamp on mount
   useEffect(() => {
@@ -736,6 +758,34 @@ export default function DashboardPage() {
       case '1y': return 'This year';
     }
   }, [salesTimeRange]);
+
+  // Retry handler: resets state and re-creates the listener
+  const handleRetry = () => {
+    setIsServerReady(false);
+    setErrorMsg(null);
+    setLoadingOrders(true);
+    setListenerKey((prev) => prev + 1);
+  };
+
+  // Show error state with retry button
+  if (errorMsg && !isServerReady) {
+    return (
+      <div className="flex items-center justify-center w-full min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl p-8 border border-white/10 max-w-md text-center">
+          <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold text-white mb-2">Connection Error</h2>
+          <p className="text-slate-400 mb-6">{errorMsg}</p>
+          <Button variant="primary" onClick={handleRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   // Show loading until server data is ready (prevents ghost rows from cache)
   if (loadingOrders || loadingPreferences || !isServerReady) {

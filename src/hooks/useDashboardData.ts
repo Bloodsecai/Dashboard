@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { subDays, startOfMonth, eachDayOfInterval, format } from 'date-fns';
@@ -136,14 +136,22 @@ export function useDashboardData(periodDays: number = 30) {
   // This prevents ghost rows from appearing during tab switches
   const [isServerReady, setIsServerReady] = useState(false);
 
+  // Error state and retry mechanism
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [listenerKey, setListenerKey] = useState(0); // Used to force re-create listeners on retry
+
   // ============================================================================
   // FIRESTORE LISTENERS
   // Only render data from server (not cache) to prevent ghost rows
   // ============================================================================
 
   useEffect(() => {
+    // Reset state when starting/retrying listeners
+    let serverReadyLocal = false;
     let loadCount = 0;
     let serverReadyCount = 0;
+    setLoading(true);
+    setErrorMsg(null);
 
     const checkLoaded = () => {
       loadCount++;
@@ -153,95 +161,147 @@ export function useDashboardData(periodDays: number = 30) {
     const checkServerReady = () => {
       serverReadyCount++;
       // All 4 listeners have received server data
-      if (serverReadyCount >= 4) setIsServerReady(true);
+      if (serverReadyCount >= 4) {
+        serverReadyLocal = true;
+        setIsServerReady(true);
+        setErrorMsg(null);
+      }
+    };
+
+    // Timeout fallback: if server data doesn't arrive within 4 seconds, show error
+    const timeoutId = setTimeout(() => {
+      if (!serverReadyLocal) {
+        setLoading(false);
+        setErrorMsg("Can't reach server right now. Please retry.");
+      }
+    }, 4000);
+
+    // Error handler for listeners
+    const handleError = (error: Error) => {
+      console.error('Firestore listener error:', error);
+      clearTimeout(timeoutId);
+      setErrorMsg(error.message || 'Failed to load data');
+      setLoading(false);
     };
 
     // Sales listener - only update state when server data arrives
-    const unsubSales = onSnapshot(collection(db, 'sales'), (snapshot) => {
-      const fromCache = snapshot.metadata.fromCache;
+    const unsubSales = onSnapshot(
+      collection(db, 'sales'),
+      (snapshot) => {
+        const fromCache = snapshot.metadata.fromCache;
 
-      // Skip cached data on initial load to prevent ghost rows
-      if (fromCache && !isServerReady) {
-        return;
-      }
+        // Skip cached data on initial load to prevent ghost rows
+        if (fromCache && !serverReadyLocal) {
+          return;
+        }
 
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as RawSaleDoc));
-      setRawSales(data);
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as RawSaleDoc));
+        setRawSales(data);
 
-      if (!fromCache) {
-        checkServerReady();
-      }
-      checkLoaded();
-    });
+        if (!fromCache) {
+          checkServerReady();
+          clearTimeout(timeoutId);
+        }
+        checkLoaded();
+      },
+      handleError
+    );
 
     // Activities listener
-    const unsubActivities = onSnapshot(collection(db, 'activities'), (snapshot) => {
-      const fromCache = snapshot.metadata.fromCache;
+    const unsubActivities = onSnapshot(
+      collection(db, 'activities'),
+      (snapshot) => {
+        const fromCache = snapshot.metadata.fromCache;
 
-      if (fromCache && !isServerReady) {
-        return;
-      }
+        if (fromCache && !serverReadyLocal) {
+          return;
+        }
 
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as ActivityDoc));
-      setActivities(data);
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as ActivityDoc));
+        setActivities(data);
 
-      if (!fromCache) {
-        checkServerReady();
-      }
-      checkLoaded();
-    });
+        if (!fromCache) {
+          checkServerReady();
+          clearTimeout(timeoutId);
+        }
+        checkLoaded();
+      },
+      handleError
+    );
 
     // Customers listener
-    const unsubCustomers = onSnapshot(collection(db, 'customers'), (snapshot) => {
-      const fromCache = snapshot.metadata.fromCache;
+    const unsubCustomers = onSnapshot(
+      collection(db, 'customers'),
+      (snapshot) => {
+        const fromCache = snapshot.metadata.fromCache;
 
-      if (fromCache && !isServerReady) {
-        return;
-      }
+        if (fromCache && !serverReadyLocal) {
+          return;
+        }
 
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as CustomerDoc));
-      setCustomers(data);
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as CustomerDoc));
+        setCustomers(data);
 
-      if (!fromCache) {
-        checkServerReady();
-      }
-      checkLoaded();
-    });
+        if (!fromCache) {
+          checkServerReady();
+          clearTimeout(timeoutId);
+        }
+        checkLoaded();
+      },
+      handleError
+    );
 
     // Targets listener
-    const unsubTargets = onSnapshot(collection(db, 'targets'), (snapshot) => {
-      const fromCache = snapshot.metadata.fromCache;
+    const unsubTargets = onSnapshot(
+      collection(db, 'targets'),
+      (snapshot) => {
+        const fromCache = snapshot.metadata.fromCache;
 
-      if (fromCache && !isServerReady) {
-        return;
-      }
+        if (fromCache && !serverReadyLocal) {
+          return;
+        }
 
-      if (!snapshot.empty) {
-        setTargets(snapshot.docs[0].data() as TargetDoc);
-      }
+        if (!snapshot.empty) {
+          setTargets(snapshot.docs[0].data() as TargetDoc);
+        }
 
-      if (!fromCache) {
-        checkServerReady();
-      }
-      checkLoaded();
-    });
+        if (!fromCache) {
+          checkServerReady();
+          clearTimeout(timeoutId);
+        }
+        checkLoaded();
+      },
+      handleError
+    );
 
     return () => {
+      clearTimeout(timeoutId);
       unsubSales();
       unsubActivities();
       unsubCustomers();
       unsubTargets();
     };
-  }, [isServerReady]);
+  }, [listenerKey]);
+
+  // ============================================================================
+  // RETRY FUNCTION
+  // ============================================================================
+
+  const retry = useCallback(() => {
+    setIsServerReady(false);
+    setErrorMsg(null);
+    setLoading(true);
+    setListenerKey((prev) => prev + 1);
+  }, []);
 
   // ============================================================================
   // NORMALIZE ALL SALES (SINGLE SOURCE OF TRUTH)
@@ -481,6 +541,10 @@ export function useDashboardData(periodDays: number = 30) {
 
     // Server ready state (prevents ghost rows from cache)
     isServerReady,
+
+    // Error state and retry function
+    errorMsg,
+    retry,
 
     // Raw counts for debugging/verification
     salesCount: rawSales.length,
