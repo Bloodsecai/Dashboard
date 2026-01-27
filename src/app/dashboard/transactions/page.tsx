@@ -2,21 +2,39 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { Search, Download, CreditCard, DollarSign, Trash2, Receipt } from 'lucide-react';
-import { useDashboardData } from '@/hooks/useDashboardData';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { useAuth } from '@/hooks/useAuth';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 
+// Order type from Firestore
+interface FirestoreOrder {
+  id: string;
+  orderId: string;
+  productId: string;
+  productName: string;
+  productImage: string;
+  amount: number;
+  customer: string;
+  paymentMethod: string;
+  status: string;
+  createdAt: Date;
+}
+
 export default function TransactionsPage() {
-  const { normalizedSales, loading } = useDashboardData(365);
   const { formatAmount } = useCurrency();
   const { user } = useAuth();
+
+  // Firestore orders state (realtime)
+  const [orders, setOrders] = useState<FirestoreOrder[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+
+  // UI state
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
@@ -26,6 +44,41 @@ export default function TransactionsPage() {
   const [isClearing, setIsClearing] = useState(false);
   const [analyticsResetTimestamp, setAnalyticsResetTimestamp] = useState<Date | null>(null);
   const [loadingPreferences, setLoadingPreferences] = useState(true);
+
+  // Realtime listener for orders collection
+  useEffect(() => {
+    const ordersQuery = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+
+    const unsubscribe = onSnapshot(
+      ordersQuery,
+      (snapshot) => {
+        const ordersData: FirestoreOrder[] = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            orderId: data.orderId || doc.id,
+            productId: data.productId || '',
+            productName: data.productName || data.product || 'Unknown Product',
+            productImage: data.productImage || data.image || '',
+            amount: data.amount || 0,
+            customer: data.customer || 'Unknown',
+            paymentMethod: data.paymentMethod || 'Unknown',
+            status: data.status || 'ordered',
+            createdAt: data.createdAt?.toDate?.() || new Date(),
+          };
+        });
+        setOrders(ordersData);
+        setLoadingOrders(false);
+      },
+      (error) => {
+        console.error('Error listening to orders:', error);
+        toast.error('Failed to load transactions');
+        setLoadingOrders(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   // Fetch user's analytics reset timestamp on mount
   useEffect(() => {
@@ -43,7 +96,9 @@ export default function TransactionsPage() {
           const data = userDoc.data();
           const resetTimestamp = data?.preferences?.analyticsResetTimestamp;
           if (resetTimestamp) {
-            setAnalyticsResetTimestamp(resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp));
+            setAnalyticsResetTimestamp(
+              resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp)
+            );
           }
         }
       } catch (error) {
@@ -56,7 +111,7 @@ export default function TransactionsPage() {
     fetchAnalyticsPreference();
   }, [user]);
 
-  // Clear transactions handler (uses same analyticsResetTimestamp as dashboard)
+  // Clear transactions handler
   const handleClearTransactions = async () => {
     if (!user?.uid) {
       toast.error('You must be logged in to clear transactions.');
@@ -67,11 +122,15 @@ export default function TransactionsPage() {
     try {
       const now = new Date();
       const userDocRef = doc(db, 'users', user.uid);
-      await setDoc(userDocRef, {
-        preferences: {
-          analyticsResetTimestamp: now
-        }
-      }, { merge: true });
+      await setDoc(
+        userDocRef,
+        {
+          preferences: {
+            analyticsResetTimestamp: now,
+          },
+        },
+        { merge: true }
+      );
 
       setAnalyticsResetTimestamp(now);
       setShowClearModal(false);
@@ -85,53 +144,53 @@ export default function TransactionsPage() {
     }
   };
 
-  // Filter transactions based on analytics reset timestamp
-  const filteredSales = useMemo(() => {
-    if (!analyticsResetTimestamp) return normalizedSales;
-    return normalizedSales.filter(s => {
-      const saleDate = new Date(s.date);
-      return saleDate > analyticsResetTimestamp;
-    });
-  }, [normalizedSales, analyticsResetTimestamp]);
+  // Filter orders based on analytics reset timestamp
+  const filteredOrders = useMemo(() => {
+    if (!analyticsResetTimestamp) return orders;
+    return orders.filter((order) => order.createdAt > analyticsResetTimestamp);
+  }, [orders, analyticsResetTimestamp]);
 
-  // Only show completed transactions (paid status)
-  const completedTransactions = useMemo(() => {
-    let transactions = filteredSales.filter(s => s.status === 'paid');
+  // Apply search filter
+  const searchedOrders = useMemo(() => {
+    if (!search) return filteredOrders;
 
-    // Search filter
-    if (search) {
-      const searchLower = search.toLowerCase();
-      transactions = transactions.filter(
-        t =>
-          t.id.toLowerCase().includes(searchLower) ||
-          t.customer.toLowerCase().includes(searchLower)
-      );
-    }
-
-    // Sort by date descending
-    transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-    return transactions;
-  }, [filteredSales, search]);
+    const searchLower = search.toLowerCase();
+    return filteredOrders.filter(
+      (order) =>
+        order.orderId.toLowerCase().includes(searchLower) ||
+        order.customer.toLowerCase().includes(searchLower) ||
+        order.productName.toLowerCase().includes(searchLower)
+    );
+  }, [filteredOrders, search]);
 
   // Calculate totals
-  const totalAmount = completedTransactions.reduce((sum, t) => sum + t.amount, 0);
+  const totalAmount = searchedOrders.reduce((sum, order) => sum + order.amount, 0);
 
   // Pagination
-  const totalPages = Math.ceil(completedTransactions.length / pageSize);
-  const paginatedTransactions = completedTransactions.slice(
+  const totalPages = Math.ceil(searchedOrders.length / pageSize);
+  const paginatedOrders = searchedOrders.slice(
     (currentPage - 1) * pageSize,
     currentPage * pageSize
   );
 
-  // Mock payment methods
-  const paymentMethods = ['Credit Card', 'Bank Transfer', 'PayPal', 'Cash'];
-  const getPaymentMethod = (id: string) => {
-    const index = id.charCodeAt(0) % paymentMethods.length;
-    return paymentMethods[index];
+  // Status badge color
+  const getStatusColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'paid':
+      case 'completed':
+        return 'bg-green-500/20 text-green-400 border-green-500/30';
+      case 'ordered':
+      case 'pending':
+        return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
+      case 'cancelled':
+      case 'failed':
+        return 'bg-red-500/20 text-red-400 border-red-500/30';
+      default:
+        return 'bg-slate-500/20 text-slate-400 border-slate-500/30';
+    }
   };
 
-  if (loading || loadingPreferences) {
+  if (loadingOrders || loadingPreferences) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         <LoadingSpinner size="lg" />
@@ -145,7 +204,7 @@ export default function TransactionsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">Transactions</h1>
-          <p className="text-slate-400 mt-1">Completed payment transactions</p>
+          <p className="text-slate-400 mt-1">All orders from Firestore</p>
         </div>
         <div className="flex flex-wrap gap-3">
           <button className="flex items-center gap-2 px-6 py-3 bg-slate-700/50 border border-white/10 text-white rounded-xl font-medium hover:bg-slate-700 transition-colors">
@@ -183,7 +242,7 @@ export default function TransactionsPage() {
             </div>
             <div>
               <p className="text-slate-400 text-sm">Total Transactions</p>
-              <p className="text-2xl font-bold text-white">{completedTransactions.length}</p>
+              <p className="text-2xl font-bold text-white">{searchedOrders.length}</p>
             </div>
           </div>
         </div>
@@ -195,7 +254,7 @@ export default function TransactionsPage() {
             <div>
               <p className="text-slate-400 text-sm">Average Transaction</p>
               <p className="text-2xl font-bold text-white">
-                {formatAmount(completedTransactions.length > 0 ? totalAmount / completedTransactions.length : 0)}
+                {formatAmount(searchedOrders.length > 0 ? totalAmount / searchedOrders.length : 0)}
               </p>
             </div>
           </div>
@@ -208,7 +267,7 @@ export default function TransactionsPage() {
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
           <input
             type="text"
-            placeholder="Search by transaction ID or customer name..."
+            placeholder="Search by order ID, customer, or product..."
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -225,46 +284,58 @@ export default function TransactionsPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-white/10">
-                <th className="text-left px-6 py-4 text-sm font-medium text-slate-400">Transaction ID</th>
+                <th className="text-left px-6 py-4 text-sm font-medium text-slate-400">
+                  Transaction ID
+                </th>
                 <th className="text-left px-6 py-4 text-sm font-medium text-slate-400">Customer</th>
                 <th className="text-left px-6 py-4 text-sm font-medium text-slate-400">Amount</th>
                 <th className="text-left px-6 py-4 text-sm font-medium text-slate-400">Date</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-slate-400">Payment Method</th>
+                <th className="text-left px-6 py-4 text-sm font-medium text-slate-400">
+                  Payment Method
+                </th>
                 <th className="text-left px-6 py-4 text-sm font-medium text-slate-400">Status</th>
               </tr>
             </thead>
             <tbody>
-              {paginatedTransactions.map((transaction) => (
+              {paginatedOrders.map((order) => (
                 <tr
-                  key={transaction.id}
+                  key={order.id}
                   className="border-b border-white/5 hover:bg-white/5 transition-colors"
                 >
                   <td className="px-6 py-4">
-                    <span className="text-white font-mono text-sm">TXN-{transaction.id.slice(0, 8).toUpperCase()}</span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-white">{transaction.customer}</span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-green-400 font-semibold">{formatAmount(transaction.amount)}</span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-slate-400 text-sm">
-                      {format(new Date(transaction.date), 'MMM dd, yyyy HH:mm')}
+                    <span className="text-white font-mono text-sm">
+                      {order.orderId.slice(0, 20)}
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    <span className="text-slate-300">{getPaymentMethod(transaction.id)}</span>
+                    <span className="text-white">{order.customer}</span>
                   </td>
                   <td className="px-6 py-4">
-                    <span className="inline-block px-3 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
-                      Completed
+                    <span className="text-green-400 font-semibold">
+                      {formatAmount(order.amount)}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="text-slate-400 text-sm">
+                      {format(order.createdAt, 'MMM dd, yyyy HH:mm')}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="text-slate-300">{order.paymentMethod}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span
+                      className={`inline-block px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(
+                        order.status
+                      )}`}
+                    >
+                      {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                     </span>
                   </td>
                 </tr>
               ))}
 
-              {paginatedTransactions.length === 0 && (
+              {paginatedOrders.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-16 text-center">
                     <div className="flex flex-col items-center">
@@ -273,7 +344,9 @@ export default function TransactionsPage() {
                       </div>
                       <p className="text-slate-400 text-lg mb-2">No transactions yet</p>
                       <p className="text-slate-500 text-sm">
-                        {search ? 'Try a different search term' : 'Transactions will appear here once orders are completed'}
+                        {search
+                          ? 'Try a different search term'
+                          : 'Transactions will appear here once orders are created'}
                       </p>
                     </div>
                   </td>
@@ -287,7 +360,9 @@ export default function TransactionsPage() {
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-6 py-4 border-t border-white/10">
             <p className="text-sm text-slate-400">
-              Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, completedTransactions.length)} of {completedTransactions.length} transactions
+              Showing {(currentPage - 1) * pageSize + 1} to{' '}
+              {Math.min(currentPage * pageSize, searchedOrders.length)} of {searchedOrders.length}{' '}
+              transactions
             </p>
             <div className="flex items-center gap-2">
               <button
@@ -320,25 +395,16 @@ export default function TransactionsPage() {
         size="sm"
       >
         <div className="space-y-6">
-          <p className="text-slate-300">
-            Are you sure you want to clear all transaction analytics?
-          </p>
+          <p className="text-slate-300">Are you sure you want to clear all transaction history?</p>
           <p className="text-sm text-slate-400">
-            This will reset dashboard calculations but will not delete Firestore records. Your original data remains safe.
+            This will hide transactions from the display but will not delete Firestore records. Your
+            original data remains safe.
           </p>
           <div className="flex gap-3 justify-end">
-            <Button
-              variant="secondary"
-              onClick={() => setShowClearModal(false)}
-              disabled={isClearing}
-            >
+            <Button variant="secondary" onClick={() => setShowClearModal(false)} disabled={isClearing}>
               Back
             </Button>
-            <Button
-              variant="danger"
-              onClick={handleClearTransactions}
-              loading={isClearing}
-            >
+            <Button variant="danger" onClick={handleClearTransactions} loading={isClearing}>
               Yes, Clear
             </Button>
           </div>

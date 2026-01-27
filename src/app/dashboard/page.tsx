@@ -7,22 +7,30 @@ import {
   ShoppingCart,
   Eye,
   Users,
-  TrendingUp,
-  TrendingDown,
   BarChart3,
   Trash2,
   Plus,
   Package,
   ImageOff,
 } from 'lucide-react';
-import { useDashboardData } from '@/hooks/useDashboardData';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { useTheme, COLOR_PALETTES } from '@/contexts/ThemeContext';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/hooks/useAuth';
-import { doc, getDoc, setDoc, collection, addDoc, Timestamp, serverTimestamp, getDocs } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  collection,
+  addDoc,
+  serverTimestamp,
+  getDocs,
+  onSnapshot,
+  query,
+  orderBy,
+} from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
 import {
@@ -35,11 +43,19 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
-// Customer names for test orders
-const TEST_CUSTOMERS = [
-  'John Smith', 'Maria Garcia', 'David Chen', 'Sarah Johnson', 'Mike Brown',
-  'Emily Davis', 'Chris Wilson', 'Lisa Anderson', 'James Taylor', 'Anna Martinez',
-];
+// Order type from Firestore
+interface FirestoreOrder {
+  id: string;
+  orderId: string;
+  productId: string;
+  productName: string;
+  productImage: string;
+  amount: number;
+  customer: string;
+  paymentMethod: string;
+  status: string;
+  createdAt: Date;
+}
 
 // Product type from Firestore
 interface FirestoreProduct {
@@ -54,33 +70,20 @@ interface FirestoreProduct {
 function StatCard({
   title,
   value,
-  change,
   icon: Icon,
   iconBg,
-  hideChange = false,
 }: {
   title: string;
   value: string;
-  change: number;
   icon: any;
   iconBg: string;
-  hideChange?: boolean;
 }) {
-  const isPositive = change >= 0;
-  const showChange = !hideChange && change !== 0;
-
   return (
     <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl p-6 border border-white/10 hover:border-primary-accent/30 transition-all">
       <div className="flex items-start justify-between mb-4">
         <div className={`w-12 h-12 rounded-xl ${iconBg} flex items-center justify-center`}>
           <Icon className="w-6 h-6 text-white" />
         </div>
-        {showChange && (
-          <div className={`flex items-center gap-1 text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-            {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-            <span>{isPositive ? '+' : ''}{change.toFixed(1)}%</span>
-          </div>
-        )}
       </div>
       <h3 className="text-slate-400 text-sm mb-1">{title}</h3>
       <p className="text-2xl font-bold text-white">{value}</p>
@@ -161,18 +164,56 @@ function ProductThumbnail({ src, alt }: { src?: string; alt: string }) {
 }
 
 export default function DashboardPage() {
-  const { loading, normalizedSales } = useDashboardData(30);
   const { formatAmount } = useCurrency();
   const { user } = useAuth();
   const { palette } = useTheme();
   const colors = COLOR_PALETTES[palette];
 
-  // Clear analytics state
+  // Firestore orders state (realtime)
+  const [orders, setOrders] = useState<FirestoreOrder[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+
+  // UI state
   const [showClearModal, setShowClearModal] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [analyticsResetTimestamp, setAnalyticsResetTimestamp] = useState<Date | null>(null);
   const [loadingPreferences, setLoadingPreferences] = useState(true);
   const [isGeneratingOrder, setIsGeneratingOrder] = useState(false);
+
+  // Realtime listener for orders collection
+  useEffect(() => {
+    const ordersQuery = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+
+    const unsubscribe = onSnapshot(
+      ordersQuery,
+      (snapshot) => {
+        const ordersData: FirestoreOrder[] = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            orderId: data.orderId || doc.id,
+            productId: data.productId || '',
+            productName: data.productName || data.product || 'Unknown Product',
+            productImage: data.productImage || data.image || '',
+            amount: data.amount || 0,
+            customer: data.customer || 'Unknown',
+            paymentMethod: data.paymentMethod || 'Unknown',
+            status: data.status || 'ordered',
+            createdAt: data.createdAt?.toDate?.() || new Date(),
+          };
+        });
+        setOrders(ordersData);
+        setLoadingOrders(false);
+      },
+      (error) => {
+        console.error('Error listening to orders:', error);
+        toast.error('Failed to load orders');
+        setLoadingOrders(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   // Fetch user's analytics reset timestamp on mount
   useEffect(() => {
@@ -190,7 +231,9 @@ export default function DashboardPage() {
           const data = userDoc.data();
           const resetTimestamp = data?.preferences?.analyticsResetTimestamp;
           if (resetTimestamp) {
-            setAnalyticsResetTimestamp(resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp));
+            setAnalyticsResetTimestamp(
+              resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp)
+            );
           }
         }
       } catch (error) {
@@ -203,6 +246,12 @@ export default function DashboardPage() {
     fetchAnalyticsPreference();
   }, [user]);
 
+  // Filter orders based on analytics reset timestamp
+  const filteredOrders = useMemo(() => {
+    if (!analyticsResetTimestamp) return orders;
+    return orders.filter((order) => order.createdAt > analyticsResetTimestamp);
+  }, [orders, analyticsResetTimestamp]);
+
   // Clear analytics handler
   const handleClearAnalytics = async () => {
     if (!user?.uid) {
@@ -214,11 +263,15 @@ export default function DashboardPage() {
     try {
       const now = new Date();
       const userDocRef = doc(db, 'users', user.uid);
-      await setDoc(userDocRef, {
-        preferences: {
-          analyticsResetTimestamp: now
-        }
-      }, { merge: true });
+      await setDoc(
+        userDocRef,
+        {
+          preferences: {
+            analyticsResetTimestamp: now,
+          },
+        },
+        { merge: true }
+      );
 
       setAnalyticsResetTimestamp(now);
       setShowClearModal(false);
@@ -231,7 +284,7 @@ export default function DashboardPage() {
     }
   };
 
-  // Generate test order handler - fetches REAL products from Firestore
+  // Generate test order - fetches REAL products from Firestore
   const handleGenerateTestOrder = async () => {
     if (!user?.uid) {
       toast.error('You must be logged in to generate test orders.');
@@ -240,7 +293,7 @@ export default function DashboardPage() {
 
     setIsGeneratingOrder(true);
     try {
-      // Fetch products from Firestore products collection
+      // Fetch all products from Firestore
       const productsSnapshot = await getDocs(collection(db, 'products'));
 
       if (productsSnapshot.empty) {
@@ -250,7 +303,7 @@ export default function DashboardPage() {
       }
 
       // Map products with their IDs
-      const products: FirestoreProduct[] = productsSnapshot.docs.map(doc => ({
+      const products: FirestoreProduct[] = productsSnapshot.docs.map((doc) => ({
         id: doc.id,
         name: doc.data().name || 'Unknown Product',
         price: doc.data().price || 0,
@@ -258,101 +311,36 @@ export default function DashboardPage() {
         category: doc.data().category || 'Uncategorized',
       }));
 
-      // Select a random product
+      // Randomly select ONE product
       const product = products[Math.floor(Math.random() * products.length)];
-      const customer = TEST_CUSTOMERS[Math.floor(Math.random() * TEST_CUSTOMERS.length)];
-      const quantity = Math.floor(Math.random() * 3) + 1;
-      const totalAmount = product.price * quantity;
-      const paymentMethod = ['Credit Card', 'Bank Transfer', 'PayPal', 'Cash'][Math.floor(Math.random() * 4)];
 
-      // Random date within last 30 days (more recent for better visibility)
-      const daysAgo = Math.floor(Math.random() * 30);
-      const orderDate = new Date();
-      orderDate.setDate(orderDate.getDate() - daysAgo);
+      // Generate order ID
+      const orderId = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
-      const orderTimestamp = Timestamp.fromDate(orderDate);
-      const orderId = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
-
-      // Order data using REAL product data from Firestore
-      const baseOrderData = {
+      // Create order document in Firestore
+      const orderData = {
         orderId: orderId,
-        // Product reference fields
         productId: product.id,
         productName: product.name,
         productImage: product.imageUrl || '',
-        // Legacy fields for compatibility
-        product: product.name,
-        category: product.category,
-        image: product.imageUrl || '',
-        // Financial data
-        amount: totalAmount,
-        price: product.price,
-        quantity: quantity,
-        // Customer data
-        customer: customer,
-        customerName: customer,
-        // Order metadata
-        status: 'paid',
-        source: 'test',
-        location: ['CA', 'NY', 'TX', 'FL', 'IL'][Math.floor(Math.random() * 5)],
-        notes: `Test order - ${quantity}x ${product.name}`,
-        // Timestamps
-        createdAt: orderTimestamp,
-        date: orderTimestamp,
+        amount: product.price,
+        customer: 'Test Customer',
+        paymentMethod: 'Test',
+        status: 'ordered',
+        createdAt: serverTimestamp(),
         userId: user.uid,
       };
 
-      console.log('Creating test order with real product:', {
-        orderId,
-        productId: product.id,
-        productName: product.name,
-        productImage: product.imageUrl,
-        quantity,
-        totalAmount,
-      });
+      console.log('Creating test order:', orderData);
 
-      // Write to all three collections: orders, transactions, sales
-      const [orderRef, transactionRef, saleRef] = await Promise.all([
-        addDoc(collection(db, 'orders'), baseOrderData),
-        addDoc(collection(db, 'transactions'), {
-          ...baseOrderData,
-          type: 'sale',
-          paymentMethod: paymentMethod,
-        }),
-        addDoc(collection(db, 'sales'), baseOrderData),
-      ]);
+      await addDoc(collection(db, 'orders'), orderData);
 
-      console.log('Test order created successfully:', {
-        orderDocId: orderRef.id,
-        transactionDocId: transactionRef.id,
-        saleDocId: saleRef.id,
-      });
-
-      // Create notification for the new order
-      try {
-        await addDoc(collection(db, 'notifications'), {
-          userId: user.uid,
-          type: 'order',
-          title: 'New test order created',
-          message: `${quantity}x ${product.name} for $${totalAmount.toFixed(2)}`,
-          read: false,
-          createdAt: serverTimestamp(),
-          link: '/dashboard/orders',
-        });
-      } catch (notifError) {
-        console.warn('Failed to create notification (non-critical):', notifError);
-      }
-
-      toast.success(`Test order created: ${quantity}x ${product.name} ($${totalAmount.toFixed(2)})`);
+      toast.success(`Test order created: ${product.name} ($${product.price.toFixed(2)})`);
     } catch (error: any) {
       console.error('Error generating test order:', error);
 
       if (error?.code === 'permission-denied') {
         toast.error('Permission denied. Please check Firestore rules.');
-      } else if (error?.code === 'unauthenticated') {
-        toast.error('Authentication required. Please log in again.');
-      } else if (error?.message?.includes('network')) {
-        toast.error('Network error. Please check your internet connection.');
       } else {
         toast.error(`Failed to generate test order: ${error?.message || 'Unknown error'}`);
       }
@@ -361,138 +349,90 @@ export default function DashboardPage() {
     }
   };
 
-  // Filter sales based on analytics reset timestamp
-  const filteredSales = useMemo(() => {
-    if (!analyticsResetTimestamp) return normalizedSales;
-    return normalizedSales.filter(s => {
-      const saleDate = new Date(s.date);
-      return saleDate > analyticsResetTimestamp;
-    });
-  }, [normalizedSales, analyticsResetTimestamp]);
-
-  // Calculate stats from filtered Firestore orders with proper delta calculations
+  // Dashboard Analytics - derived from orders
   const stats = useMemo(() => {
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-
-    // Current period (last 30 days) from filtered sales
-    const currentPeriodSales = filteredSales.filter(s => new Date(s.date) >= thirtyDaysAgo);
-    // Previous period (30-60 days ago) from filtered sales
-    const previousPeriodSales = filteredSales.filter(s => {
-      const saleDate = new Date(s.date);
-      return saleDate >= sixtyDaysAgo && saleDate < thirtyDaysAgo;
-    });
-
-    // Current metrics (only completed/paid orders)
-    const currentPaidSales = currentPeriodSales.filter(s => s.status === 'paid');
-    const totalRevenue = currentPaidSales.reduce((sum, s) => sum + s.amount, 0);
-    const totalTransactions = currentPaidSales.length;
-    const uniqueCustomers = new Set(currentPaidSales.map(s => s.customer)).size;
-    const productViewed = Math.floor(totalTransactions * 7);
-
-    // Previous metrics (only completed/paid orders)
-    const previousPaidSales = previousPeriodSales.filter(s => s.status === 'paid');
-    const prevRevenue = previousPaidSales.reduce((sum, s) => sum + s.amount, 0);
-    const prevTransactions = previousPaidSales.length;
-    const prevUniqueCustomers = new Set(previousPaidSales.map(s => s.customer)).size;
-    const prevProductViewed = Math.floor(prevTransactions * 7);
-
-    // Calculate deltas
-    const calcDelta = (current: number, previous: number) => {
-      if (previous === 0) return 0;
-      return ((current - previous) / previous) * 100;
-    };
-
-    const hasCurrentData = totalRevenue > 0 || totalTransactions > 0;
-    const hasPreviousData = prevRevenue > 0 || prevTransactions > 0;
-    const showDeltas = hasCurrentData && hasPreviousData && !analyticsResetTimestamp;
+    const totalRevenue = filteredOrders.reduce((sum, order) => sum + order.amount, 0);
+    const totalTransactions = filteredOrders.length;
+    const uniqueUsers = new Set(filteredOrders.map((order) => order.customer)).size;
 
     return {
       totalRevenue,
       totalTransactions,
-      productViewed,
-      uniqueUsers: uniqueCustomers,
-      revenueChange: showDeltas ? calcDelta(totalRevenue, prevRevenue) : 0,
-      transactionsChange: showDeltas ? calcDelta(totalTransactions, prevTransactions) : 0,
-      viewsChange: showDeltas ? calcDelta(productViewed, prevProductViewed) : 0,
-      usersChange: showDeltas ? calcDelta(uniqueCustomers, prevUniqueCustomers) : 0,
-      hideDeltas: !showDeltas,
+      productViewed: 0, // Keep at 0 as per requirements
+      uniqueUsers,
     };
-  }, [filteredSales, analyticsResetTimestamp]);
+  }, [filteredOrders]);
 
-  // Sales by platform data
+  // Sales Report - Shopping = Website = sum(amount), Others = 0
   const salesByPlatform = useMemo(() => {
-    const hasData = stats.totalRevenue > 0;
+    const totalAmount = stats.totalRevenue;
     return [
-      { name: 'Website', value: hasData ? Math.round(stats.totalRevenue * 0.45) : 0, color: `linear-gradient(90deg, ${colors.primary}, ${colors.secondary})` },
-      { name: 'Shopping', value: hasData ? Math.round(stats.totalRevenue * 0.25) : 0, color: `linear-gradient(90deg, ${colors.secondary}, #6366f1)` },
-      { name: 'Amazon', value: hasData ? Math.round(stats.totalRevenue * 0.20) : 0, color: 'linear-gradient(90deg, #6366f1, #3b82f6)' },
-      { name: 'Alibaba', value: hasData ? Math.round(stats.totalRevenue * 0.10) : 0, color: 'linear-gradient(90deg, #3b82f6, #06b6d4)' },
+      {
+        name: 'Shopping',
+        value: totalAmount,
+        color: `linear-gradient(90deg, ${colors.primary}, ${colors.secondary})`,
+      },
+      {
+        name: 'Website',
+        value: totalAmount,
+        color: `linear-gradient(90deg, ${colors.secondary}, #6366f1)`,
+      },
+      {
+        name: 'Others',
+        value: 0,
+        color: 'linear-gradient(90deg, #6366f1, #3b82f6)',
+      },
     ];
   }, [stats.totalRevenue, colors]);
 
   // Traffic data
   const trafficData = useMemo(() => {
     const hasData = stats.totalTransactions > 0;
-    const baseViews = stats.totalTransactions * 50;
     return [
-      { name: 'Website', views: hasData ? `${Math.round(baseViews * 0.5 / 1000)}k` : '0', percentage: hasData ? 80 : 0 },
-      { name: 'Instagram Ads', views: hasData ? `${Math.round(baseViews * 0.25 / 1000)}k` : '0', percentage: hasData ? 45 : 0 },
-      { name: 'Facebook Ads', views: hasData ? `${Math.round(baseViews * 0.25 / 1000)}k` : '0', percentage: hasData ? 65 : 0 },
+      { name: 'Website', views: hasData ? `${stats.totalTransactions}` : '0', percentage: hasData ? 80 : 0 },
+      { name: 'Instagram Ads', views: '0', percentage: 0 },
+      { name: 'Facebook Ads', views: '0', percentage: 0 },
     ];
   }, [stats.totalTransactions]);
 
-  // Popular products from Firestore sales - grouped by productId with images
+  // Popular Products - grouped by productId, sorted by quantity
   const popularProducts = useMemo(() => {
-    // Filter to only completed (paid) orders
-    const completedOrders = filteredSales.filter(sale => sale.status === 'paid');
-
-    if (completedOrders.length === 0) {
+    if (filteredOrders.length === 0) {
       return [];
     }
 
-    // Group by productId (or productName as fallback) and track image
-    const productMap = new Map<string, {
-      productId: string;
-      name: string;
-      image: string;
-      quantity: number;
-      revenue: number;
-    }>();
+    // Group by productId and count quantity
+    const productMap = new Map<
+      string,
+      {
+        productId: string;
+        name: string;
+        image: string;
+        quantity: number;
+      }
+    >();
 
-    completedOrders.forEach(sale => {
-      // Use productId if available, otherwise use product name as key
-      const saleData = sale as any;
-      const productId = saleData.productId || saleData.product || 'unknown';
-      const productName = saleData.productName || saleData.product || 'Unknown Product';
-      const productImage = saleData.productImage || saleData.image || '';
-      const qty = saleData.quantity || 1;
-
+    filteredOrders.forEach((order) => {
+      const productId = order.productId || order.productName;
       const existing = productMap.get(productId);
+
       if (existing) {
-        existing.quantity += qty;
-        existing.revenue += sale.amount;
-        // Keep the first non-empty image found
-        if (!existing.image && productImage) {
-          existing.image = productImage;
-        }
+        existing.quantity += 1;
       } else {
         productMap.set(productId, {
           productId,
-          name: productName,
-          image: productImage,
-          quantity: qty,
-          revenue: sale.amount,
+          name: order.productName,
+          image: order.productImage,
+          quantity: 1,
         });
       }
     });
 
-    // Sort by quantity sold and take top 6
+    // Sort by quantity (highest first) and take top 6
     return Array.from(productMap.values())
       .sort((a, b) => b.quantity - a.quantity)
       .slice(0, 6);
-  }, [filteredSales]);
+  }, [filteredOrders]);
 
   // Monthly sales chart data
   const monthlySalesData = useMemo(() => {
@@ -500,18 +440,18 @@ export default function DashboardPage() {
     const currentMonth = new Date().getMonth();
 
     return months.slice(0, currentMonth + 1).map((month, index) => {
-      const monthSales = filteredSales.filter(s => {
-        const saleMonth = new Date(s.date).getMonth();
-        return saleMonth === index && s.status === 'paid';
+      const monthOrders = filteredOrders.filter((order) => {
+        const orderMonth = order.createdAt.getMonth();
+        return orderMonth === index;
       });
       return {
         name: month,
-        sales: monthSales.reduce((sum, s) => sum + s.amount, 0),
+        sales: monthOrders.reduce((sum, order) => sum + order.amount, 0),
       };
     });
-  }, [filteredSales]);
+  }, [filteredOrders]);
 
-  if (loading || loadingPreferences) {
+  if (loadingOrders || loadingPreferences) {
     return (
       <div className="flex items-center justify-center w-full min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         <div className="flex flex-col items-center">
@@ -553,36 +493,28 @@ export default function DashboardPage() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <StatCard
-          title="Total Revenues"
+          title="Total Revenue"
           value={formatAmount(stats.totalRevenue)}
-          change={stats.revenueChange}
           icon={DollarSign}
           iconBg="bg-gradient-primary"
-          hideChange={stats.hideDeltas}
         />
         <StatCard
           title="Total Transactions"
           value={stats.totalTransactions.toLocaleString()}
-          change={stats.transactionsChange}
           icon={ShoppingCart}
           iconBg="bg-gradient-to-br from-blue-500 to-cyan-500"
-          hideChange={stats.hideDeltas}
         />
         <StatCard
           title="Product Viewed"
           value={stats.productViewed.toLocaleString()}
-          change={stats.viewsChange}
           icon={Eye}
           iconBg="bg-gradient-to-br from-purple-500 to-indigo-600"
-          hideChange={stats.hideDeltas}
         />
         <StatCard
           title="Unique Users"
           value={stats.uniqueUsers.toLocaleString()}
-          change={stats.usersChange}
           icon={Users}
           iconBg="bg-gradient-to-br from-orange-500 to-red-500"
-          hideChange={stats.hideDeltas}
         />
       </div>
 
@@ -602,7 +534,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h2 className="text-lg font-semibold text-white">Traffic Analytics</h2>
-              <p className="text-slate-400 text-sm">Total views from 3 platforms</p>
+              <p className="text-slate-400 text-sm">Total views from platforms</p>
             </div>
           </div>
           <TrafficAnalytics data={trafficData} />
@@ -646,7 +578,10 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <Link href="/dashboard/products" className="block w-full mt-4 py-3 btn-gradient-primary text-white rounded-xl font-medium transition-all text-center">
+          <Link
+            href="/dashboard/products"
+            className="block w-full mt-4 py-3 btn-gradient-primary text-white rounded-xl font-medium transition-all text-center"
+          >
             See all products
           </Link>
         </div>
@@ -661,7 +596,6 @@ export default function DashboardPage() {
           </div>
           <select className="bg-slate-700 text-white text-sm rounded-lg px-3 py-2 border border-white/10">
             <option>This Year</option>
-            <option>Last Year</option>
           </select>
         </div>
         <div className="h-80">
@@ -675,7 +609,11 @@ export default function DashboardPage() {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} />
-              <YAxis stroke="#94a3b8" fontSize={12} tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`} />
+              <YAxis
+                stroke="#94a3b8"
+                fontSize={12}
+                tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+              />
               <Tooltip
                 contentStyle={{
                   backgroundColor: '#1e293b',
@@ -706,24 +644,15 @@ export default function DashboardPage() {
         size="sm"
       >
         <div className="space-y-6">
-          <p className="text-slate-300">
-            Are you sure you want to clear your analytics?
-          </p>
+          <p className="text-slate-300">Are you sure you want to clear your analytics?</p>
           <p className="text-sm text-slate-400">
-            This will reset all analytics values to zero. Your sales records and products will remain unchanged.
+            This will reset all analytics values to zero. Your order records will remain unchanged.
           </p>
           <div className="flex gap-3 justify-end">
-            <Button
-              variant="secondary"
-              onClick={() => setShowClearModal(false)}
-            >
+            <Button variant="secondary" onClick={() => setShowClearModal(false)}>
               Back
             </Button>
-            <Button
-              variant="danger"
-              onClick={handleClearAnalytics}
-              loading={isClearing}
-            >
+            <Button variant="danger" onClick={handleClearAnalytics} loading={isClearing}>
               Yes, Clear
             </Button>
           </div>
