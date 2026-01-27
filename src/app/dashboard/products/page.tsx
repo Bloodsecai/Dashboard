@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { Plus, Pencil, Trash2, X, Package, ImageOff, Link as LinkIcon, Loader2, Search } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Plus, Pencil, Trash2, X, Package, ImageOff, Upload, Loader2, Search } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { useTheme, COLOR_PALETTES } from '@/contexts/ThemeContext';
+import { uploadToCloudinary, validateImageFile, createImagePreview, revokeImagePreview } from '@/lib/cloudinary';
 
 interface Product {
   id: string;
@@ -26,17 +28,6 @@ interface ProductFormData {
   imageUrl: string;
   category: string;
 }
-
-// Validate URL format
-const isValidImageUrl = (url: string): boolean => {
-  if (!url) return true; // Empty is OK
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-};
 
 // Product Image component with fallback and failsafe timeout
 function ProductImage({
@@ -110,24 +101,25 @@ function ProductCard({
   product,
   onEdit,
   onDelete,
+  themeColors,
 }: {
   product: Product;
   onEdit: () => void;
   onDelete: () => void;
+  themeColors: { primary: string; secondary: string; primaryRgb: string; secondaryRgb: string };
 }) {
-  // Debug logging (temporary)
-  console.log('ProductCard imageUrl:', product.imageUrl);
-  console.log('Full product object:', product);
-
   return (
-    <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl border border-white/10 overflow-hidden hover:border-pink-500/30 transition-all group">
+    <div
+      className="bg-slate-800/50 backdrop-blur-sm rounded-2xl border border-white/10 overflow-hidden transition-all group"
+      onMouseEnter={(e) => e.currentTarget.style.borderColor = `rgba(${themeColors.primaryRgb}, 0.3)`}
+      onMouseLeave={(e) => e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)'}
+    >
       {/* Image Container - relative positioning for overlay */}
       <div className="relative aspect-square">
         <ProductImage
           src={product.imageUrl || ''}
           alt={product.name}
           className="w-full h-full"
-          showDebug={true}
         />
 
         {/* Overlay on hover */}
@@ -154,7 +146,7 @@ function ProductCard({
           {product.info || 'No description'}
         </p>
         <div className="flex items-center justify-between mt-4">
-          <span className="text-pink-400 font-bold text-lg">
+          <span className="font-bold text-lg" style={{ color: themeColors.primary }}>
             ${product.price.toLocaleString()}
           </span>
           <span className="text-xs text-slate-500 bg-slate-700/50 px-2 py-1 rounded-lg">
@@ -166,17 +158,19 @@ function ProductCard({
   );
 }
 
-// Product Form component
+// Product Form component with Cloudinary upload
 function ProductForm({
   initialData,
   onSave,
   onCancel,
   isSaving,
+  themeColors,
 }: {
   initialData?: ProductFormData;
-  onSave: (data: ProductFormData) => void;
+  onSave: (data: ProductFormData, newImageFile?: File) => void;
   onCancel: () => void;
   isSaving: boolean;
+  themeColors: { primary: string; secondary: string; primaryRgb: string; secondaryRgb: string };
 }) {
   const [formData, setFormData] = useState<ProductFormData>(
     initialData || {
@@ -187,7 +181,68 @@ function ProductForm({
       category: '',
     }
   );
-  const [urlError, setUrlError] = useState('');
+
+  // Image upload state
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string>('');
+  const [fileError, setFileError] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Cleanup preview URL on unmount or when file changes
+  useEffect(() => {
+    return () => {
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        revokeImagePreview(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file
+    const validation = validateImageFile(file);
+    if (!validation.isValid) {
+      setFileError(validation.error || 'Invalid file');
+      toast.error(validation.error || 'Invalid file');
+      return;
+    }
+
+    // Clear any previous errors
+    setFileError('');
+
+    // Revoke old preview URL if exists
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      revokeImagePreview(previewUrl);
+    }
+
+    // Create new preview
+    const newPreviewUrl = createImagePreview(file);
+    setPreviewUrl(newPreviewUrl);
+    setSelectedFile(file);
+  };
+
+  const handleRemoveImage = () => {
+    // Revoke preview URL if exists
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      revokeImagePreview(previewUrl);
+    }
+
+    setSelectedFile(null);
+    setPreviewUrl('');
+    setFormData({ ...formData, imageUrl: '' });
+    setFileError('');
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,65 +260,86 @@ function ProductForm({
       return;
     }
 
-    // Validate URL format
-    if (formData.imageUrl && !isValidImageUrl(formData.imageUrl)) {
-      setUrlError('URL must start with http:// or https://');
-      return;
-    }
-
-    onSave(formData);
+    // Pass the selected file to parent for upload
+    onSave(formData, selectedFile || undefined);
   };
 
-  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = e.target.value;
-    setFormData({ ...formData, imageUrl: url });
-
-    if (url && !isValidImageUrl(url)) {
-      setUrlError('URL must start with http:// or https://');
-    } else {
-      setUrlError('');
-    }
-  };
+  // Determine what image to show in preview
+  const displayImageUrl = previewUrl || formData.imageUrl || '';
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Image URL with Preview */}
+      {/* Image Upload */}
       <div>
         <label className="block text-sm font-medium text-slate-300 mb-2">
-          Image URL
+          Product Image
         </label>
         <div className="flex gap-4">
           {/* Preview */}
-          <div className="w-24 h-24 flex-shrink-0 rounded-xl overflow-hidden border border-white/10">
-            <ProductImage
-              src={formData.imageUrl}
-              alt="Preview"
-              className="w-full h-full"
-            />
+          <div className="w-32 h-32 flex-shrink-0 rounded-xl overflow-hidden border border-white/10 relative">
+            {displayImageUrl ? (
+              <>
+                <ProductImage
+                  src={displayImageUrl}
+                  alt="Preview"
+                  className="w-full h-full"
+                />
+                {/* Remove button overlay */}
+                <button
+                  type="button"
+                  onClick={handleRemoveImage}
+                  className="absolute top-1 right-1 p-1.5 bg-red-500/80 hover:bg-red-500 rounded-lg transition-colors"
+                  title="Remove image"
+                >
+                  <X className="w-3 h-3 text-white" />
+                </button>
+              </>
+            ) : (
+              <div className="w-full h-full bg-slate-700/50 flex flex-col items-center justify-center">
+                <ImageOff className="w-8 h-8 text-slate-500 mb-1" />
+                <span className="text-slate-500 text-xs">No Image</span>
+              </div>
+            )}
           </div>
 
-          {/* URL Input */}
-          <div className="flex-1">
-            <div className="relative">
-              <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-              <input
-                type="text"
-                value={formData.imageUrl}
-                onChange={handleUrlChange}
-                className={`w-full pl-10 pr-4 py-3 bg-slate-700 border rounded-xl text-white placeholder:text-slate-500 focus:outline-none transition-colors ${
-                  urlError
-                    ? 'border-red-500 focus:border-red-500'
-                    : 'border-white/10 focus:border-pink-500/50'
-                }`}
-                placeholder="https://example.com/image.jpg"
-              />
-            </div>
-            {urlError && (
-              <p className="text-red-400 text-xs mt-1">{urlError}</p>
+          {/* Upload Controls */}
+          <div className="flex-1 flex flex-col justify-center">
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/jpg,image/png,image/webp"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
+            {/* Upload button */}
+            <button
+              type="button"
+              onClick={handleUploadClick}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-700 border border-white/10 rounded-xl text-white hover:bg-slate-600 transition-colors"
+              onMouseEnter={(e) => e.currentTarget.style.borderColor = `rgba(${themeColors.primaryRgb}, 0.5)`}
+              onMouseLeave={(e) => e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)'}
+            >
+              <Upload className="w-4 h-4" />
+              {selectedFile ? 'Change Image' : displayImageUrl ? 'Replace Image' : 'Upload Image'}
+            </button>
+
+            {/* File info or help text */}
+            {selectedFile ? (
+              <p className="text-slate-400 text-xs mt-2">
+                Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
+              </p>
+            ) : (
+              <p className="text-slate-500 text-xs mt-2">
+                JPG, PNG, or WebP. Max 5MB.
+              </p>
             )}
-            <p className="text-slate-500 text-xs mt-1">
-              Enter a direct link to an image (PNG, JPG, WebP)
-            </p>
+
+            {/* Error message */}
+            {fileError && (
+              <p className="text-red-400 text-xs mt-1">{fileError}</p>
+            )}
           </div>
         </div>
       </div>
@@ -277,7 +353,9 @@ function ProductForm({
           type="text"
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          className="w-full bg-slate-700 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:border-pink-500/50"
+          className="w-full bg-slate-700 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none transition-colors"
+          onFocus={(e) => e.target.style.borderColor = `rgba(${themeColors.primaryRgb}, 0.5)`}
+          onBlur={(e) => e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)'}
           placeholder="Enter product name"
           required
         />
@@ -296,7 +374,9 @@ function ProductForm({
             min="0"
             value={formData.price}
             onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-            className="w-full bg-slate-700 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:border-pink-500/50"
+            className="w-full bg-slate-700 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none transition-colors"
+            onFocus={(e) => e.target.style.borderColor = `rgba(${themeColors.primaryRgb}, 0.5)`}
+            onBlur={(e) => e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)'}
             placeholder="0.00"
             required
           />
@@ -313,7 +393,9 @@ function ProductForm({
             onChange={(e) =>
               setFormData({ ...formData, category: e.target.value })
             }
-            className="w-full bg-slate-700 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:border-pink-500/50"
+            className="w-full bg-slate-700 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none transition-colors"
+            onFocus={(e) => e.target.style.borderColor = `rgba(${themeColors.primaryRgb}, 0.5)`}
+            onBlur={(e) => e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)'}
             placeholder="e.g., Electronics"
           />
         </div>
@@ -327,7 +409,9 @@ function ProductForm({
         <textarea
           value={formData.info}
           onChange={(e) => setFormData({ ...formData, info: e.target.value })}
-          className="w-full bg-slate-700 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 resize-none focus:outline-none focus:border-pink-500/50"
+          className="w-full bg-slate-700 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 resize-none focus:outline-none transition-colors"
+          onFocus={(e) => e.target.style.borderColor = `rgba(${themeColors.primaryRgb}, 0.5)`}
+          onBlur={(e) => e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)'}
           rows={3}
           placeholder="Enter product description"
         />
@@ -345,8 +429,8 @@ function ProductForm({
         </button>
         <button
           type="submit"
-          disabled={isSaving || !!urlError}
-          className="flex-1 px-4 sm:px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white rounded-xl font-medium hover:from-pink-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          disabled={isSaving}
+          className="flex-1 px-4 sm:px-6 py-3 btn-gradient-primary text-white rounded-xl font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
           {isSaving ? 'Saving...' : initialData ? 'Update' : 'Add Product'}
@@ -364,6 +448,8 @@ export default function ProductsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [search, setSearch] = useState('');
   const { addNotification } = useNotifications();
+  const { palette } = useTheme();
+  const colors = COLOR_PALETTES[palette];
 
   // Filter products based on search query
   const filteredProducts = useMemo(() => {
@@ -384,9 +470,6 @@ export default function ProductsPage() {
       );
     });
   }, [products, search]);
-
-  // Debug logging (temporary)
-  console.log('search:', search, 'products:', products.length, 'filtered:', filteredProducts.length);
 
   // Load products from Firebase with real-time updates
   useEffect(() => {
@@ -416,16 +499,32 @@ export default function ProductsPage() {
     return () => unsubscribe();
   }, []);
 
-  const handleSave = async (formData: ProductFormData) => {
+  const handleSave = async (formData: ProductFormData, newImageFile?: File) => {
     setIsSaving(true);
 
     try {
-      // Standardize imageUrl field - always save as string, never undefined
+      let imageUrl = formData.imageUrl?.trim() || '';
+
+      // If a new file was selected, upload to Cloudinary first
+      if (newImageFile) {
+        try {
+          toast.loading('Uploading image...', { id: 'image-upload' });
+          imageUrl = await uploadToCloudinary(newImageFile);
+          toast.success('Image uploaded successfully', { id: 'image-upload' });
+        } catch (uploadError: any) {
+          console.error('Error uploading image:', uploadError);
+          toast.error(`Image upload failed: ${uploadError.message}`, { id: 'image-upload' });
+          setIsSaving(false);
+          return; // Don't save product if image upload fails
+        }
+      }
+
+      // Prepare product data
       const productData = {
         name: formData.name.trim(),
         price: parseFloat(formData.price) || 0,
         info: formData.info.trim(),
-        imageUrl: formData.imageUrl?.trim() || '',
+        imageUrl: imageUrl,
         category: formData.category.trim(),
         updatedAt: serverTimestamp(),
       };
@@ -511,12 +610,14 @@ export default function ProductsPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search products..."
-              className="w-64 pl-10 pr-4 py-2.5 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-pink-500/50 transition-colors"
+              className="w-64 pl-10 pr-4 py-2.5 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder:text-slate-500 focus:outline-none transition-colors"
+              onFocus={(e) => e.target.style.borderColor = `rgba(${colors.primaryRgb}, 0.5)`}
+              onBlur={(e) => e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)'}
             />
           </div>
           <button
             onClick={openAddModal}
-            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white rounded-xl font-medium hover:from-pink-600 hover:to-purple-700 transition-all"
+            className="flex items-center gap-2 px-6 py-3 btn-gradient-primary text-white rounded-xl font-medium transition-all"
           >
             <Plus className="w-5 h-5" />
             Add Product
@@ -532,6 +633,7 @@ export default function ProductsPage() {
               product={product}
               onEdit={() => openEditModal(product)}
               onDelete={() => handleDelete(product.id)}
+              themeColors={colors}
             />
           </div>
         ))}
@@ -561,7 +663,7 @@ export default function ProductsPage() {
             </p>
             <button
               onClick={openAddModal}
-              className="px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white rounded-xl font-medium"
+              className="px-6 py-3 btn-gradient-primary text-white rounded-xl font-medium"
             >
               Add Product
             </button>
@@ -603,6 +705,7 @@ export default function ProductsPage() {
                 onSave={handleSave}
                 onCancel={closeModal}
                 isSaving={isSaving}
+                themeColors={colors}
               />
             </div>
           </div>

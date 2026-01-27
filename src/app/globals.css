@@ -415,3 +415,31 @@ button {
 .btn-gradient-primary:hover {
   box-shadow: 0 0 30px rgba(var(--color-primary-rgb), 0.4);
 }
+
+/* Dynamic focus states */
+.focus-primary:focus {
+  border-color: rgba(var(--color-primary-rgb), 0.5) !important;
+}
+
+/* Dynamic icon backgrounds */
+.bg-primary-gradient-subtle {
+  background: linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.2) 0%, rgba(var(--color-secondary-rgb), 0.2) 100%);
+}
+
+.hover\:bg-primary-gradient-subtle:hover {
+  background: linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.3) 0%, rgba(var(--color-secondary-rgb), 0.3) 100%);
+}
+
+/* Dynamic border colors */
+.border-primary-accent\/30 {
+  border-color: rgba(var(--color-primary-rgb), 0.3);
+}
+
+/* Dynamic background with opacity */
+.bg-primary-accent\/20 {
+  background-color: rgba(var(--color-primary-rgb), 0.2);
+}
+
+.bg-gradient-primary-subtle {
+  background: linear-gradient(135deg, rgba(var(--color-primary-rgb), 0.2) 0%, rgba(var(--color-secondary-rgb), 0.2) 100%);
+}

@@ -22,7 +22,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/hooks/useAuth';
-import { doc, getDoc, setDoc, collection, addDoc, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, addDoc, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
 import {
@@ -226,6 +226,7 @@ export default function DashboardPage() {
       const customer = TEST_CUSTOMERS[Math.floor(Math.random() * TEST_CUSTOMERS.length)];
       const quantity = Math.floor(Math.random() * 3) + 1;
       const totalAmount = product.price * quantity;
+      const paymentMethod = ['Credit Card', 'Bank Transfer', 'PayPal', 'Cash'][Math.floor(Math.random() * 4)];
 
       // Random date within last 60 days
       const daysAgo = Math.floor(Math.random() * 60);
@@ -255,21 +256,55 @@ export default function DashboardPage() {
         userId: user.uid,
       };
 
+      console.log('Creating test order:', { orderId, product: product.name, quantity, totalAmount, userId: user.uid });
+
       // Write to all three collections: orders, transactions, sales
-      await Promise.all([
+      const [orderRef, transactionRef, saleRef] = await Promise.all([
         addDoc(collection(db, 'orders'), baseOrderData),
         addDoc(collection(db, 'transactions'), {
           ...baseOrderData,
           type: 'sale',
-          paymentMethod: ['Credit Card', 'Bank Transfer', 'PayPal', 'Cash'][Math.floor(Math.random() * 4)],
+          paymentMethod: paymentMethod,
         }),
         addDoc(collection(db, 'sales'), baseOrderData),
       ]);
 
-      toast.success(`Test order created: ${quantity}x ${product.name}`);
-    } catch (error) {
+      console.log('Test order created successfully:', {
+        orderDocId: orderRef.id,
+        transactionDocId: transactionRef.id,
+        saleDocId: saleRef.id,
+      });
+
+      // Create notification for the new order
+      try {
+        await addDoc(collection(db, 'notifications'), {
+          userId: user.uid,
+          type: 'order',
+          title: 'New test order created',
+          message: `${quantity}x ${product.name} for $${totalAmount.toFixed(2)}`,
+          read: false,
+          createdAt: serverTimestamp(),
+          link: '/dashboard/orders',
+        });
+      } catch (notifError) {
+        console.warn('Failed to create notification (non-critical):', notifError);
+      }
+
+      toast.success(`Test order created: ${quantity}x ${product.name} ($${totalAmount.toFixed(2)})`);
+    } catch (error: any) {
       console.error('Error generating test order:', error);
-      toast.error('Failed to generate test order.');
+
+      // Provide specific error messages based on error type
+      if (error?.code === 'permission-denied') {
+        toast.error('Permission denied. Please check Firestore rules allow authenticated writes.');
+        console.error('Firestore permission denied. Ensure rules allow: authenticated users to write to orders, transactions, and sales collections with their userId.');
+      } else if (error?.code === 'unauthenticated') {
+        toast.error('Authentication required. Please log in again.');
+      } else if (error?.message?.includes('network')) {
+        toast.error('Network error. Please check your internet connection.');
+      } else {
+        toast.error(`Failed to generate test order: ${error?.message || 'Unknown error'}`);
+      }
     } finally {
       setIsGeneratingOrder(false);
     }
