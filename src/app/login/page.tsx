@@ -177,8 +177,8 @@ export default function LoginPage() {
           {/* Footer */}
           <div className="mt-8 pt-6 border-t border-white/10 text-center">
             <p className="text-sm text-text-muted">
-              Powered by{' '}
-              <span className="gradient-text font-semibold">Sales Workspace</span>
+              Created By{' '}
+              <span className="gradient-text font-semibold">Macky Mercado</span>
             </p>
           </div>
         </div>
