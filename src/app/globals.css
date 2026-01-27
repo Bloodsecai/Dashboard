@@ -14,14 +14,21 @@
   --border: rgba(255, 255, 255, 0.08);
   --border-light: rgba(255, 255, 255, 0.12);
 
-  /* Gradient colors */
+  /* Dynamic theme colors - set by ThemeContext */
+  --color-primary: #7c3aed;
+  --color-secondary: #ec4899;
+  --color-accent: #a855f7;
+  --color-primary-rgb: 124, 58, 237;
+  --color-secondary-rgb: 236, 72, 153;
+
+  /* Legacy gradient colors (for backwards compatibility) */
   --primary-purple: #7c3aed;
   --primary-pink: #ec4899;
   --primary-violet: #8b5cf6;
 
   /* Glow effects */
-  --glow-purple: rgba(124, 58, 237, 0.4);
-  --glow-pink: rgba(236, 72, 153, 0.3);
+  --glow-purple: rgba(var(--color-primary-rgb), 0.4);
+  --glow-pink: rgba(var(--color-secondary-rgb), 0.3);
 }
 
 @theme inline {
@@ -352,6 +359,59 @@ button {
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(90deg, #7c3aed 0%, #ec4899 100%);
+  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
   border-radius: 1px;
+}
+
+/* Dynamic theme utilities */
+.bg-gradient-primary {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+}
+
+.bg-primary-accent {
+  background-color: var(--color-primary);
+}
+
+.text-primary-accent {
+  color: var(--color-primary);
+}
+
+.border-primary-accent {
+  border-color: var(--color-primary);
+}
+
+.hover\:border-primary-accent\/30:hover {
+  border-color: rgba(var(--color-primary-rgb), 0.3);
+}
+
+/* Dynamic active states for sidebar */
+.sidebar-active {
+  background: linear-gradient(90deg, rgba(var(--color-primary-rgb), 0.2) 0%, rgba(var(--color-secondary-rgb), 0.2) 100%);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.3);
+}
+
+.sidebar-active-icon {
+  color: var(--color-primary);
+}
+
+/* Dynamic gradient text */
+.gradient-text-dynamic {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Dynamic glow */
+.glow-primary {
+  box-shadow: 0 0 30px rgba(var(--color-primary-rgb), 0.4);
+}
+
+/* Dynamic button gradient */
+.btn-gradient-primary {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+}
+
+.btn-gradient-primary:hover {
+  box-shadow: 0 0 30px rgba(var(--color-primary-rgb), 0.4);
 }

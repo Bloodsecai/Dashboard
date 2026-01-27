@@ -15,11 +15,11 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     const baseClasses = 'inline-flex items-center justify-center rounded-xl font-medium transition-all duration-300 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden';
 
     const variants = {
-      primary: 'bg-gradient-to-r from-primary-purple to-primary-pink text-white hover:shadow-glow-md hover:scale-[1.02] active:scale-[0.98]',
+      primary: 'btn-gradient-primary text-white hover:scale-[1.02] active:scale-[0.98]',
       secondary: 'glass border border-white/10 text-white hover:bg-white/10 hover:border-white/20',
       danger: 'bg-danger text-white hover:bg-danger/90 hover:shadow-lg',
       ghost: 'text-text-secondary hover:text-white hover:bg-white/5',
-      outline: 'border border-primary-purple/50 text-primary-purple hover:bg-primary-purple/10 hover:border-primary-purple',
+      outline: 'border border-primary-accent/50 text-primary-accent hover:bg-primary-accent/10 hover:border-primary-accent',
     };
 
     const sizes = {

@@ -30,10 +30,13 @@ import {
   Link as LinkIcon,
   ImageOff,
   Loader2,
+  Palette,
+  Check,
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useTheme, COLOR_PALETTES } from '@/contexts/ThemeContext';
 
-type TabId = 'general' | 'n8n-tutorial' | 'api-keys' | 'profile';
+type TabId = 'general' | 'appearance' | 'n8n-tutorial' | 'api-keys' | 'profile';
 
 interface Tab {
   id: TabId;
@@ -43,6 +46,7 @@ interface Tab {
 
 const tabs: Tab[] = [
   { id: 'general', name: 'General', icon: Settings },
+  { id: 'appearance', name: 'Appearance', icon: Palette },
   { id: 'n8n-tutorial', name: 'N8N Tutorial', icon: Workflow },
   { id: 'api-keys', name: 'API Keys', icon: Key },
   { id: 'profile', name: 'Profile', icon: User },
@@ -53,11 +57,13 @@ export default function SettingsPage() {
   const { currency, setCurrency } = useCurrency();
   const { user } = useAuth();
   const { profilePicture, isSaving, updateProfilePictureUrl } = useProfile();
+  const { palette, setPalette } = useTheme();
   const [activeTab, setActiveTab] = useState<TabId>('general');
   const [dateFormat, setDateFormat] = useState('MM/DD/YYYY');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [profileUrlInput, setProfileUrlInput] = useState('');
   const [profileImageError, setProfileImageError] = useState(false);
+  const [savingPalette, setSavingPalette] = useState(false);
 
   // Initialize profile URL input when profilePicture loads
   useEffect(() => {
@@ -142,6 +148,120 @@ export default function SettingsPage() {
       <pre className="bg-black/40 rounded-xl p-4 overflow-x-auto text-sm text-text-secondary border border-white/10">
         <code>{code}</code>
       </pre>
+    </div>
+  );
+
+  const handlePaletteChange = async (newPalette: keyof typeof COLOR_PALETTES) => {
+    setSavingPalette(true);
+    try {
+      await setPalette(newPalette);
+      toast.success(`Theme changed to ${COLOR_PALETTES[newPalette].name}`);
+    } catch (error) {
+      toast.error('Failed to save theme preference');
+    } finally {
+      setSavingPalette(false);
+    }
+  };
+
+  const renderAppearanceTab = () => (
+    <div className="space-y-6">
+      <Card title="Color Palette">
+        <div className="space-y-4">
+          <p className="text-text-secondary">
+            Choose a color palette that will be applied throughout the application.
+          </p>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {(Object.keys(COLOR_PALETTES) as Array<keyof typeof COLOR_PALETTES>).map((key) => {
+              const colors = COLOR_PALETTES[key];
+              const isSelected = palette === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => handlePaletteChange(key)}
+                  disabled={savingPalette}
+                  className={clsx(
+                    'relative p-4 rounded-xl border-2 transition-all duration-200 group',
+                    isSelected
+                      ? 'border-white/30 bg-white/10'
+                      : 'border-white/10 hover:border-white/20 hover:bg-white/5'
+                  )}
+                >
+                  {/* Color swatches */}
+                  <div className="flex items-center gap-3 mb-3">
+                    <div
+                      className="w-10 h-10 rounded-lg shadow-lg"
+                      style={{
+                        background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.secondary} 100%)`
+                      }}
+                    />
+                    <div className="flex flex-col gap-1">
+                      <div
+                        className="w-6 h-3 rounded"
+                        style={{ backgroundColor: colors.primary }}
+                      />
+                      <div
+                        className="w-6 h-3 rounded"
+                        style={{ backgroundColor: colors.secondary }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Label */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-text-primary font-medium">{colors.name}</span>
+                    {isSelected && (
+                      <div
+                        className="w-5 h-5 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: colors.primary }}
+                      >
+                        <Check className="w-3 h-3 text-white" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Preview bar */}
+                  <div
+                    className="mt-3 h-1 rounded-full"
+                    style={{
+                      background: `linear-gradient(90deg, ${colors.primary} 0%, ${colors.secondary} 100%)`
+                    }}
+                  />
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="p-4 rounded-xl bg-white/5 border border-white/10 mt-6">
+            <div className="flex items-start gap-3">
+              <Palette className="w-5 h-5 text-primary-accent mt-0.5" />
+              <div>
+                <p className="text-text-primary font-medium">Live Preview</p>
+                <p className="text-sm text-text-secondary mt-1">
+                  Changes are applied instantly. Your preference is saved to your account and will be remembered across sessions.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card title="Theme Mode">
+        <div className="space-y-4">
+          <p className="text-text-secondary">
+            The application currently uses a dark theme optimized for low-light environments.
+          </p>
+          <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/10">
+            <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center">
+              <span className="text-lg">🌙</span>
+            </div>
+            <div>
+              <p className="text-text-primary font-medium">Dark Mode</p>
+              <p className="text-sm text-text-muted">Active</p>
+            </div>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 
@@ -944,6 +1064,7 @@ export default function SettingsPage() {
 
       {/* Tab Content */}
       {activeTab === 'general' && renderGeneralTab()}
+      {activeTab === 'appearance' && renderAppearanceTab()}
       {activeTab === 'n8n-tutorial' && renderN8NTutorialTab()}
       {activeTab === 'api-keys' && renderAPIKeysTab()}
       {activeTab === 'profile' && renderProfileTab()}

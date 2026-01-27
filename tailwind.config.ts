@@ -23,6 +23,10 @@ const config: Config = {
         'primary-pink': '#ec4899',
         'primary-violet': '#8b5cf6',
 
+        // Dynamic theme colors (CSS variables)
+        'primary-accent': 'var(--color-primary)',
+        'secondary-accent': 'var(--color-secondary)',
+
         // Accent colors
         primary: '#7c3aed',
         secondary: '#ec4899',
