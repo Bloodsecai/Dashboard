@@ -1,8 +1,8 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User, onAuthStateChanged, signOut } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { User, onAuthStateChanged, signOut, Auth } from 'firebase/auth';
+import { getFirebaseAuth } from '@/lib/firebase';
 import { isAdminEmail } from '@/config/admins';
 
 interface AuthContextType {
@@ -19,7 +19,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const auth = getFirebaseAuth();
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(auth as Auth, (user) => {
       setUser(user);
       setLoading(false);
     });
@@ -30,7 +36,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAdmin = user ? isAdminEmail(user.email || '') : false;
 
   const logout = async () => {
-    await signOut(auth);
+    const auth = getFirebaseAuth();
+    if (auth) {
+      await signOut(auth);
+    }
   };
 
   return (

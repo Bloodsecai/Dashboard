@@ -129,13 +129,47 @@ function initializeFirebase(): { error: string | null } {
 }
 
 // =============================================================================
-// SAFE EXPORTS - LAZY GETTERS
+// SAFE EXPORTS - LAZY GETTERS & GUARANTEED INSTANCES
+// =============================================================================
+
+// =============================================================================
+// GUARANTEED EXPORTS (Non-nullable for direct usage)
+// These exports provide guaranteed Firestore | Auth instances
+// by initializing Firebase and returning the instances
 // =============================================================================
 
 /**
- * Get Firestore instance. Initializes Firebase if needed.
- * Safe to call from client-side code only.
- * Returns null if Firebase initialization failed.
+ * Get guaranteed non-null Firestore instance.
+ * Initializes Firebase on first call.
+ * Safe for client-side code only.
+ * Throws if Firebase configuration is missing or initialization fails.
+ */
+export function getDb(): Firestore {
+  initializeFirebase();
+  if (!db) {
+    throw new Error('[Firebase] Firestore initialization failed. Check env vars and Firestore rules.');
+  }
+  return db;
+}
+
+/**
+ * Get guaranteed non-null Auth instance.
+ * Initializes Firebase on first call.
+ * Safe for client-side code only.
+ * Throws if Firebase configuration is missing or initialization fails.
+ */
+export function getAuthInstance(): Auth {
+  initializeFirebase();
+  if (!auth) {
+    throw new Error('[Firebase] Auth initialization failed. Check env vars and Firebase configuration.');
+  }
+  return auth;
+}
+
+/**
+ * Get Firestore instance or null if initialization failed.
+ * Initializes Firebase on first call.
+ * Safe for client-side code only.
  */
 export function getFirebaseDb(): Firestore | null {
   initializeFirebase();
@@ -143,20 +177,37 @@ export function getFirebaseDb(): Firestore | null {
 }
 
 /**
- * Get Firebase Auth instance. Initializes Firebase if needed.
- * Safe to call from client-side code only.
- * Returns null if Firebase initialization failed.
+ * Get Auth instance or null if initialization failed.
+ * Initializes Firebase on first call.
+ * Safe for client-side code only.
  */
 export function getFirebaseAuth(): Auth | null {
   initializeFirebase();
   return auth;
 }
 
-// For backward compatibility with existing code
-export { db, auth };
+// Lazy-loaded guaranteed exports - type-safe non-nullable versions
+// These execute getDb() and getAuthInstance() on access
+// Reduces circular dependency issues while maintaining type safety
+const dbExport = new Proxy({} as Firestore, {
+  get(target, prop) {
+    return (getDb() as any)[prop];
+  },
+  apply(target, thisArg, args) {
+    return (getDb() as any)(...args);
+  },
+}) as Firestore;
 
-// BUT: These exports are only safe when called after initialization!
-// Better to use getFirebaseDb() and getFirebaseAuth() instead.
+const authExport = new Proxy({} as Auth, {
+  get(target, prop) {
+    return (getAuthInstance() as any)[prop];
+  },
+  apply(target, thisArg, args) {
+    return (getAuthInstance() as any)(...args);
+  },
+}) as Auth;
+
+export { dbExport as db, authExport as auth };
 
 /**
  * Check if Firebase is ready to use.
