@@ -5,7 +5,7 @@ import { Upload, FileText } from 'lucide-react';
 import Papa from 'papaparse';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { getFirebaseDb, isFirebaseReady } from '@/lib/firebase';
+import { getFirebaseDb, firebaseReady } from '@/lib/firebase';
 import { collection, addDoc, getDocs, query, where, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -79,7 +79,7 @@ export default function ImportPage() {
   useEffect(() => {
     const fetchImports = async () => {
       const db = getFirebaseDb();
-      if (!isFirebaseReady() || !db) return;
+      if (!firebaseReady || !db) return;
       
       try {
         const querySnapshot = await getDocs(collection(db, 'imports'));
@@ -99,7 +99,7 @@ export default function ImportPage() {
   const handleImport = async () => {
     const db = getFirebaseDb();
 
-    if (!isFirebaseReady() || !db) {
+    if (!firebaseReady || !db) {
       toast.error('Firebase not ready');
       return;
     }

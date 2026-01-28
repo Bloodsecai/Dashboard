@@ -10,7 +10,7 @@ import { useProfile } from '@/contexts/ProfileContext';
 import { exportSalesToCSV } from '@/lib/csv';
 import { toast } from 'sonner';
 import { collection, getDocs, deleteDoc } from 'firebase/firestore';
-import { getFirebaseDb, isFirebaseReady } from '@/lib/firebase';
+import { getFirebaseDb, firebaseReady } from '@/lib/firebase';
 import {
   Settings,
   Workflow,
@@ -107,7 +107,7 @@ export default function SettingsPage() {
   const handleClearImportHistory = async () => {
     const db = getFirebaseDb();
 
-    if (!isFirebaseReady() || !db) {
+    if (!firebaseReady || !db) {
       toast.error('Firebase not ready');
       return;
     }

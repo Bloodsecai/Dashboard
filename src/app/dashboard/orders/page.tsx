@@ -9,7 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/hooks/useAuth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { getFirebaseDb, isFirebaseReady } from '@/lib/firebase';
+import { getFirebaseDb, firebaseReady, firebaseInitError } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 
@@ -35,7 +35,7 @@ export default function OrdersPage() {
     const fetchOrdersPreference = async () => {
       const db = getFirebaseDb();
 
-      if (!user?.uid || !db || !isFirebaseReady()) {
+      if (!user?.uid || !db || !firebaseReady) {
         setLoadingPreferences(false);
         return;
       }

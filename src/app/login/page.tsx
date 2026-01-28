@@ -1,15 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { getFirebaseAuth, isFirebaseReady, getFirebaseError } from '@/lib/firebase';
+import { getFirebaseAuth, firebaseReady, firebaseInitError } from '@/lib/firebase';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Button } from '@/components/ui/Button';
 import { useTheme, COLOR_PALETTES } from '@/contexts/ThemeContext';
-import { Mail, Lock, Sparkles, ArrowRight } from 'lucide-react';
+import { Mail, Lock, Sparkles, ArrowRight, AlertTriangle } from 'lucide-react';
+import { ErrorState } from '@/components/ui/ErrorState';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -33,14 +34,27 @@ export default function LoginPage() {
     resolver: zodResolver(loginSchema),
   });
 
+  // If Firebase is not ready, show error state
+  if (!firebaseReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <ErrorState
+          title="Firebase Configuration Error"
+          message={firebaseInitError || 'Firebase is not properly configured. Please check your environment variables and try again.'}
+          onRetry={() => window.location.reload()}
+        />
+      </div>
+    );
+  }
+
   const onSubmit = async (data: LoginForm) => {
     setLoading(true);
     setError('');
 
     const auth = getFirebaseAuth();
     
-    if (!auth || !isFirebaseReady()) {
-      setError(getFirebaseError() || 'Firebase not initialized');
+    if (!auth || !firebaseReady) {
+      setError(firebaseInitError || 'Firebase not initialized');
       setLoading(false);
       return;
     }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { getFirebaseDb, isFirebaseReady } from '@/lib/firebase';
+import { getFirebaseDb, firebaseReady } from '@/lib/firebase';
 import { subDays, startOfMonth, eachDayOfInterval, format } from 'date-fns';
 import {
   RawSaleDoc,
@@ -156,7 +156,7 @@ export function useDashboardData(periodDays: number = 30) {
     const db = getFirebaseDb();
 
     // GUARD: Ensure Firebase is ready before setting up listeners
-    if (!isFirebaseReady() || !db) {
+    if (!firebaseReady || !db) {
       setLoading(false);
       setErrorMsg('Firebase not properly initialized. Check Vercel environment variables.');
       return;

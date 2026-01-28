@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Pencil, Trash2, X, Package, ImageOff, Upload, Loader2, Search } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
-import { getFirebaseDb, isFirebaseReady } from '@/lib/firebase';
+import { getFirebaseDb, firebaseReady } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useNotifications } from '@/contexts/NotificationContext';
@@ -476,7 +476,7 @@ export default function ProductsPage() {
     // Get Firebase instance (lazy init, client-side only)
     const db = getFirebaseDb();
 
-    if (!isFirebaseReady() || !db) {
+    if (!firebaseReady || !db) {
       setLoading(false);
       toast.error('Firebase not ready');
       return;
@@ -511,7 +511,7 @@ export default function ProductsPage() {
   const handleSave = async (formData: ProductFormData, newImageFile?: File) => {
     const db = getFirebaseDb();
 
-    if (!isFirebaseReady() || !db) {
+    if (!firebaseReady || !db) {
       toast.error('Firebase not ready');
       return;
     }
@@ -577,7 +577,7 @@ export default function ProductsPage() {
   const handleDelete = async (id: string) => {
     const db = getFirebaseDb();
 
-    if (!isFirebaseReady() || !db) {
+    if (!firebaseReady || !db) {
       toast.error('Firebase not ready');
       return;
     }

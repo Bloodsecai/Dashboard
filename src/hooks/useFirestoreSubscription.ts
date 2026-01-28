@@ -151,8 +151,9 @@ export function useFirestoreSubscription<T>(
     setError(null);
     setData([]); // Start with empty array - no stale/cached data
 
+    const configResult = getFirebaseConfig();
     debugLog(`Subscribing to ${collectionName}`, {
-      projectId: getFirebaseConfig().projectId,
+      projectId: configResult.ok ? configResult.config.projectId : 'unknown',
       timeout,
       skipCache,
     });

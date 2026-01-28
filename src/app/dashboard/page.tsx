@@ -34,7 +34,7 @@ import {
   query,
   orderBy,
 } from 'firebase/firestore';
-import { getFirebaseDb, isFirebaseReady, getFirebaseError } from '@/lib/firebase';
+import { getFirebaseDb, firebaseReady, firebaseInitError } from '@/lib/firebase';
 import { toast } from 'sonner';
 import {
   AreaChart,
@@ -388,34 +388,30 @@ function ProductThumbnail({ src, alt }: { src?: string; alt: string }) {
 
 export default function DashboardPage() {
   const { formatAmount } = useCurrency();
-  const { user, loading: authLoading, firebaseError } = useAuth();
+  const { user, loading: authLoading, firebaseError: authError } = useAuth();
 
-  // Check Firebase init on mount
-  const [firebaseInitError, setFirebaseInitError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isFirebaseReady()) {
-      setFirebaseInitError(getFirebaseError());
-    }
-  }, []);
-
-  // Show Firebase init error
-  if (firebaseInitError) {
+  // Show Firebase init error first
+  if (!firebaseReady) {
     return (
-      <ErrorState
-        title="Firebase Configuration Error"
-        message={firebaseInitError}
-      />
+      <div className="flex items-center justify-center w-full min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+        <ErrorState
+          title="Firebase Configuration Error"
+          message={firebaseInitError || 'Firebase is not properly configured. Please check your environment variables.'}
+          onRetry={() => window.location.reload()}
+        />
+      </div>
     );
   }
 
-  // Show Firebase hook error
-  if (firebaseError) {
+  // Show auth error
+  if (authError) {
     return (
-      <ErrorState
-        title="Authentication Error"
-        message={firebaseError}
-      />
+      <div className="flex items-center justify-center w-full min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+        <ErrorState
+          title="Authentication Error"
+          message={authError}
+        />
+      </div>
     );
   }
 
@@ -434,10 +430,12 @@ export default function DashboardPage() {
   // Show if not authenticated
   if (!user?.uid) {
     return (
-      <ErrorState
-        title="Not Authenticated"
-        message="Please log in to view the dashboard."
-      />
+      <div className="flex items-center justify-center w-full min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+        <ErrorState
+          title="Not Authenticated"
+          message="Please log in to view the dashboard."
+        />
+      </div>
     );
   }
   const { palette } = useTheme();
@@ -469,7 +467,7 @@ export default function DashboardPage() {
     const db = getFirebaseDb();
 
     // GUARD: Ensure Firebase and auth are ready
-    if (!isFirebaseReady() || !db || !user?.uid) {
+    if (!firebaseReady || !db || !user?.uid) {
       setLoadingOrders(false);
       setErrorMsg('Firebase not ready or user not authenticated');
       return;
@@ -608,7 +606,7 @@ export default function DashboardPage() {
     const fetchAnalyticsPreference = async () => {
       const db = getFirebaseDb();
 
-      if (!user?.uid || !db || !isFirebaseReady()) {
+      if (!user?.uid || !db || !firebaseReady) {
         setLoadingPreferences(false);
         return;
       }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { getFirebaseAuth, isFirebaseReady, getFirebaseError } from '@/lib/firebase';
+import { getFirebaseAuth, firebaseReady, firebaseInitError } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 import { isAdminEmail } from '@/config/admins';
 
@@ -32,11 +32,10 @@ export function useAuth(): UseAuthReturn {
     const auth = getFirebaseAuth();
 
     // Check if Firebase is properly initialized
-    if (!isFirebaseReady()) {
-      const error = getFirebaseError();
-      setFirebaseError(error);
+    if (!firebaseReady) {
+      setFirebaseError(firebaseInitError);
       setLoading(false);
-      console.error('[useAuth] Firebase not ready:', error);
+      console.error('[useAuth] Firebase not ready:', firebaseInitError);
       return;
     }
 
