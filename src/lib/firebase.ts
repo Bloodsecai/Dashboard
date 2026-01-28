@@ -231,3 +231,20 @@ export function getFirebaseConfig() {
     error: initializationError,
   };
 }
+
+// =============================================================================
+// MODULE-LOAD CLIENT-SIDE INIT & DIRECT EXPORTS
+// =============================================================================
+// Initialize Firebase immediately when this module is loaded on the client.
+// This preserves all existing error handling paths and keeps the lazy
+// getters available for existing code.
+if (typeof window !== 'undefined') {
+  initializeFirebase();
+}
+
+/**
+ * Direct instance exports (live bindings).
+ * Prefer the getter functions (`getDb()`, `getAuthInstance()`) when possible,
+ * but these are provided for components that import instances directly.
+ */
+export { app, auth, db };
