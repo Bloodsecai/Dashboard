@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   collection,
   onSnapshot,
@@ -12,6 +12,7 @@ import {
   query,
   where,
   getDocs,
+  orderBy,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Customer, Sale } from '@/types';
@@ -19,23 +20,109 @@ import { Customer, Sale } from '@/types';
 export function useCustomers() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isServerReady, setIsServerReady] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [listenerKey, setListenerKey] = useState(0);
+
+  // Retry function
+  const retry = useCallback(() => {
+    setIsServerReady(false);
+    setErrorMsg(null);
+    setLoading(true);
+    setCustomers([]); // Clear stale data
+    setListenerKey((prev) => prev + 1);
+  }, []);
 
   useEffect(() => {
-    // Real-time listener on customers collection
-    const unsubscribe = onSnapshot(collection(db, 'customers'), (snapshot) => {
-      const customersData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Customer));
-      setCustomers(customersData);
-      setLoading(false);
-    }, (error) => {
-      console.error('Error fetching customers:', error);
-      setLoading(false);
-    });
+    let serverReadyLocal = false;
+    setLoading(true);
+    setErrorMsg(null);
+    setCustomers([]); // Clear stale data to prevent ghost rows
 
-    return unsubscribe;
-  }, []);
+    const isDev = process.env.NODE_ENV !== 'production';
+    if (isDev) {
+      console.log('[useCustomers] Subscribing to customers collection');
+    }
+
+    // 8-second timeout
+    const timeoutId = setTimeout(() => {
+      if (!serverReadyLocal) {
+        setLoading(false);
+        setErrorMsg("Can't reach Firestore. Check Vercel env vars or Firestore rules.");
+        if (isDev) {
+          console.error('[useCustomers] Timeout: No server response after 8 seconds');
+        }
+      }
+    }, 8000);
+
+    // Query with orderBy for consistent ordering
+    const customersQuery = query(collection(db, 'customers'), orderBy('createdAt', 'desc'));
+
+    // Real-time listener on customers collection
+    const unsubscribe = onSnapshot(
+      customersQuery,
+      (snapshot) => {
+        const fromCache = snapshot.metadata.fromCache;
+
+        if (isDev) {
+          console.log('[useCustomers] Snapshot received:', {
+            fromCache,
+            docCount: snapshot.docs.length,
+          });
+        }
+
+        // Skip cache data on initial load to prevent ghost rows
+        if (fromCache && !serverReadyLocal) {
+          return;
+        }
+
+        const customersData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as Customer));
+        setCustomers(customersData);
+
+        if (!fromCache) {
+          serverReadyLocal = true;
+          setIsServerReady(true);
+          clearTimeout(timeoutId);
+          setErrorMsg(null);
+        }
+
+        setLoading(false);
+      },
+      (error: any) => {
+        const errorCode = error?.code || 'unknown';
+        const errorMessage = error?.message || 'Failed to load customers';
+
+        if (isDev) {
+          console.error('[useCustomers] Firestore error:', {
+            code: errorCode,
+            message: errorMessage,
+            fullError: error,
+          });
+        }
+
+        clearTimeout(timeoutId);
+
+        // User-friendly error messages
+        let userMessage = errorMessage;
+        if (errorCode === 'permission-denied') {
+          userMessage = 'Permission denied. Check Firestore security rules.';
+        } else if (errorCode === 'unavailable') {
+          userMessage = "Can't reach Firestore. Check your internet connection.";
+        }
+
+        setErrorMsg(userMessage);
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      clearTimeout(timeoutId);
+      unsubscribe();
+    };
+  }, [listenerKey]);
 
   const addCustomer = async (customerData: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'totalSpent' | 'orderCount'>) => {
     const docRef = await addDoc(collection(db, 'customers'), {
@@ -112,6 +199,9 @@ export function useCustomers() {
   return {
     customers,
     loading,
+    isServerReady,
+    errorMsg,
+    retry,
     addCustomer,
     updateCustomer,
     deleteCustomer,

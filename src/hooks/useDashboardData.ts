@@ -153,6 +153,20 @@ export function useDashboardData(periodDays: number = 30) {
     setLoading(true);
     setErrorMsg(null);
 
+    // Clear stale data to prevent ghost rows
+    setRawSales([]);
+    setActivities([]);
+    setCustomers([]);
+    setTargets({});
+
+    // Debug logging in development
+    const isDev = process.env.NODE_ENV !== 'production';
+    if (isDev) {
+      console.log('[useDashboardData] Subscribing to collections:', {
+        collections: ['sales', 'activities', 'customers', 'targets'],
+      });
+    }
+
     const checkLoaded = () => {
       loadCount++;
       if (loadCount >= 4) setLoading(false);
@@ -165,22 +179,54 @@ export function useDashboardData(periodDays: number = 30) {
         serverReadyLocal = true;
         setIsServerReady(true);
         setErrorMsg(null);
+        if (isDev) {
+          console.log('[useDashboardData] All collections ready from server');
+        }
       }
     };
 
-    // Timeout fallback: if server data doesn't arrive within 4 seconds, show error
+    // Timeout fallback: if server data doesn't arrive within 8 seconds, show error
     const timeoutId = setTimeout(() => {
       if (!serverReadyLocal) {
         setLoading(false);
-        setErrorMsg("Can't reach server right now. Please retry.");
+        setErrorMsg("Can't reach Firestore. Check Vercel env vars or Firestore rules.");
+        if (isDev) {
+          console.error('[useDashboardData] Timeout: No server response after 8 seconds', {
+            serverReadyCount,
+            loadCount,
+          });
+        }
       }
-    }, 4000);
+    }, 8000);
 
     // Error handler for listeners
-    const handleError = (error: Error) => {
-      console.error('Firestore listener error:', error);
+    const handleError = (error: any) => {
+      const errorCode = error?.code || 'unknown';
+      const errorMessage = error?.message || 'Failed to load data';
+
+      if (isDev) {
+        console.error('[useDashboardData] Firestore error:', {
+          code: errorCode,
+          message: errorMessage,
+          fullError: error,
+        });
+      } else {
+        console.error('[useDashboardData] Firestore error:', errorCode);
+      }
+
       clearTimeout(timeoutId);
-      setErrorMsg(error.message || 'Failed to load data');
+
+      // Provide user-friendly error messages
+      let userMessage = errorMessage;
+      if (errorCode === 'permission-denied') {
+        userMessage = 'Permission denied. Check Firestore security rules.';
+      } else if (errorCode === 'unavailable') {
+        userMessage = "Can't reach Firestore. Check your internet connection.";
+      } else if (errorCode === 'unauthenticated') {
+        userMessage = 'Authentication required. Please sign in again.';
+      }
+
+      setErrorMsg(userMessage);
       setLoading(false);
     };
 
@@ -189,6 +235,13 @@ export function useDashboardData(periodDays: number = 30) {
       collection(db, 'sales'),
       (snapshot) => {
         const fromCache = snapshot.metadata.fromCache;
+
+        if (isDev) {
+          console.log('[useDashboardData] sales snapshot:', {
+            fromCache,
+            docCount: snapshot.docs.length,
+          });
+        }
 
         // Skip cached data on initial load to prevent ghost rows
         if (fromCache && !serverReadyLocal) {

