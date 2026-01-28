@@ -389,7 +389,6 @@ function ProductThumbnail({ src, alt }: { src?: string; alt: string }) {
 export default function DashboardPage() {
   const { formatAmount } = useCurrency();
   const { user, loading: authLoading, firebaseError } = useAuth();
-  const { colors } = useTheme();
 
   // Check Firebase init on mount
   const [firebaseInitError, setFirebaseInitError] = useState<string | null>(null);
@@ -442,7 +441,7 @@ export default function DashboardPage() {
     );
   }
   const { palette } = useTheme();
-  const colors = COLOR_PALETTES[palette];
+  const themeColors = COLOR_PALETTES[palette];
 
   // Firestore orders state (realtime)
   const [orders, setOrders] = useState<FirestoreOrder[]>([]);
@@ -998,9 +997,9 @@ export default function DashboardPage() {
             </div>
           </div>
           {salesReportView === 'donut' ? (
-            <SalesReportDonut data={salesByPlatform} colors={colors} formatAmount={formatAmount} />
+            <SalesReportDonut data={salesByPlatform} colors={themeColors} formatAmount={formatAmount} />
           ) : (
-            <SalesReportStandard data={salesByPlatform} colors={colors} formatAmount={formatAmount} />
+            <SalesReportStandard data={salesByPlatform} colors={themeColors} formatAmount={formatAmount} />
           )}
         </div>
 
@@ -1017,9 +1016,9 @@ export default function DashboardPage() {
             />
           </div>
           {trafficAnalyticsView === 'donut' ? (
-            <TrafficAnalyticsDonut data={trafficData} colors={colors} />
+            <TrafficAnalyticsDonut data={trafficData} colors={themeColors} />
           ) : (
-            <TrafficAnalyticsStandard data={trafficData} colors={colors} />
+            <TrafficAnalyticsStandard data={trafficData} colors={themeColors} />
           )}
         </div>
 
@@ -1095,8 +1094,8 @@ export default function DashboardPage() {
             <AreaChart data={salesChartData}>
               <defs>
                 <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={colors.primary} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={colors.secondary} stopOpacity={0} />
+                  <stop offset="5%" stopColor={themeColors.primary} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={themeColors.secondary} stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -1118,7 +1117,7 @@ export default function DashboardPage() {
               <Area
                 type="monotone"
                 dataKey="sales"
-                stroke={colors.primary}
+                stroke={themeColors.primary}
                 strokeWidth={3}
                 fillOpacity={1}
                 fill="url(#salesGradient)"
