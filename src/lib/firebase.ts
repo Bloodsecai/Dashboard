@@ -128,4 +128,25 @@ if (typeof window !== 'undefined') {
 // EXPORTS
 // =============================================================================
 
+/**
+ * Get Firestore instance or null if initialization failed.
+ */
+export function getFirebaseDb() {
+  return db;
+}
+
+/**
+ * Get Auth instance or null if initialization failed.
+ */
+export function getFirebaseAuth() {
+  return auth;
+}
+
+/**
+ * Get Firebase config - returns object or null if config is missing
+ */
+export function getFirebaseConfig() {
+  return buildFirebaseConfig();
+}
+
 export { firebaseApp, auth, db };
