@@ -5,10 +5,11 @@ import { Search, Download, CreditCard, DollarSign, Trash2, Receipt } from 'lucid
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { useAuth } from '@/hooks/useAuth';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { doc, getDoc, setDoc, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db, isFirebaseReady, getFirebaseError } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 
@@ -28,7 +29,58 @@ interface FirestoreOrder {
 
 export default function TransactionsPage() {
   const { formatAmount } = useCurrency();
-  const { user } = useAuth();
+  const { user, loading: authLoading, firebaseError } = useAuth();
+
+  // Check Firebase init on mount
+  const [firebaseInitError, setFirebaseInitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isFirebaseReady()) {
+      setFirebaseInitError(getFirebaseError());
+    }
+  }, []);
+
+  // Show Firebase init error
+  if (firebaseInitError) {
+    return (
+      <ErrorState
+        title="Firebase Configuration Error"
+        message={firebaseInitError}
+      />
+    );
+  }
+
+  // Show Firebase hook error
+  if (firebaseError) {
+    return (
+      <ErrorState
+        title="Authentication Error"
+        message={firebaseError}
+      />
+    );
+  }
+
+  // Show auth loading
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center w-full min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="flex flex-col items-center">
+          <LoadingSpinner size="lg" />
+          <p className="text-slate-400 mt-4">Loading transactions...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show if not authenticated
+  if (!user?.uid) {
+    return (
+      <ErrorState
+        title="Not Authenticated"
+        message="Please log in to view transactions."
+      />
+    );
+  }
 
   // Firestore orders state (realtime)
   const [orders, setOrders] = useState<FirestoreOrder[]>([]);
@@ -51,6 +103,13 @@ export default function TransactionsPage() {
   // Realtime listener for orders collection
   // Only render data from server (not cache) to prevent ghost rows
   useEffect(() => {
+    // GUARD: Ensure Firebase and auth are ready
+    if (!isFirebaseReady() || !db || !user?.uid) {
+      setLoadingOrders(false);
+      setErrorMsg('Firebase not ready or user not authenticated');
+      return;
+    }
+
     // Reset state when starting/retrying listener
     let serverReadyLocal = false;
     setLoadingOrders(true);
@@ -69,19 +128,22 @@ export default function TransactionsPage() {
       console.log('[Transactions] Subscribing to orders collection');
     }
 
-    // Timeout fallback: if server data doesn't arrive within 8 seconds, show error
+    // Timeout fallback: if server data doesn't arrive within 6 seconds, show error
     const timeoutId = setTimeout(() => {
       if (!serverReadyLocal) {
         setLoadingOrders(false);
         setErrorMsg("Can't reach Firestore. Check Vercel env vars or Firestore rules.");
         if (isDev) {
-          console.error('[Transactions] Timeout: No server response after 8 seconds');
+          console.error('[Transactions] Timeout: No server response after 6 seconds');
         }
       }
-    }, 8000);
+    }, 6000);
 
-    const unsubscribe = onSnapshot(
-      ordersQuery,
+    let unsubscribe: (() => void) | undefined;
+
+    try {
+      unsubscribe = onSnapshot(
+        ordersQuery,
       (snapshot) => {
         // Check if this is from cache or server
         const fromCache = snapshot.metadata.fromCache;
@@ -159,18 +221,26 @@ export default function TransactionsPage() {
         setErrorMsg(userMessage);
         setLoadingOrders(false);
       }
-    );
+      );
+    } catch (error: any) {
+      console.error('[Transactions] Exception in listener setup:', error);
+      setLoadingOrders(false);
+      setErrorMsg('Failed to set up real-time updates. Please refresh the page.');
+      clearTimeout(timeoutId);
+    }
 
     return () => {
       clearTimeout(timeoutId);
-      unsubscribe();
+      if (unsubscribe) {
+        unsubscribe();
+      }
     };
-  }, [listenerKey]);
+  }, [listenerKey, user?.uid]);
 
   // Fetch user's analytics reset timestamp on mount
   useEffect(() => {
     const fetchAnalyticsPreference = async () => {
-      if (!user?.uid) {
+      if (!user?.uid || !db || !isFirebaseReady()) {
         setLoadingPreferences(false);
         return;
       }

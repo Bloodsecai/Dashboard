@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db, isFirebaseReady } from '@/lib/firebase';
 import { subDays, startOfMonth, eachDayOfInterval, format } from 'date-fns';
 import {
   RawSaleDoc,
@@ -146,6 +146,13 @@ export function useDashboardData(periodDays: number = 30) {
   // ============================================================================
 
   useEffect(() => {
+    // GUARD: Ensure Firebase is ready before setting up listeners
+    if (!isFirebaseReady() || !db) {
+      setLoading(false);
+      setErrorMsg('Firebase not properly initialized. Check Vercel environment variables.');
+      return;
+    }
+
     // Reset state when starting/retrying listeners
     let serverReadyLocal = false;
     let loadCount = 0;
@@ -185,19 +192,19 @@ export function useDashboardData(periodDays: number = 30) {
       }
     };
 
-    // Timeout fallback: if server data doesn't arrive within 8 seconds, show error
+    // Timeout fallback: if server data doesn't arrive within 6 seconds, show error
     const timeoutId = setTimeout(() => {
       if (!serverReadyLocal) {
         setLoading(false);
         setErrorMsg("Can't reach Firestore. Check Vercel env vars or Firestore rules.");
         if (isDev) {
-          console.error('[useDashboardData] Timeout: No server response after 8 seconds', {
+          console.error('[useDashboardData] Timeout: No server response after 6 seconds', {
             serverReadyCount,
             loadCount,
           });
         }
       }
-    }, 8000);
+    }, 6000);
 
     // Error handler for listeners
     const handleError = (error: any) => {
