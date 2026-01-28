@@ -34,7 +34,7 @@ import {
   query,
   orderBy,
 } from 'firebase/firestore';
-import { db, isFirebaseReady, getFirebaseError } from '@/lib/firebase';
+import { getFirebaseDb, isFirebaseReady, getFirebaseError } from '@/lib/firebase';
 import { toast } from 'sonner';
 import {
   AreaChart,
@@ -466,6 +466,9 @@ export default function DashboardPage() {
   // Realtime listener for orders collection
   // Only render data from server (not cache) to prevent ghost rows
   useEffect(() => {
+    // Get Firebase instance (lazy init, client-side only)
+    const db = getFirebaseDb();
+
     // GUARD: Ensure Firebase and auth are ready
     if (!isFirebaseReady() || !db || !user?.uid) {
       setLoadingOrders(false);
@@ -604,6 +607,8 @@ export default function DashboardPage() {
   // Fetch user's analytics reset timestamp on mount
   useEffect(() => {
     const fetchAnalyticsPreference = async () => {
+      const db = getFirebaseDb();
+
       if (!user?.uid || !db || !isFirebaseReady()) {
         setLoadingPreferences(false);
         return;
@@ -640,7 +645,9 @@ export default function DashboardPage() {
 
   // Clear analytics handler
   const handleClearAnalytics = async () => {
-    if (!user?.uid) {
+    const db = getFirebaseDb();
+
+    if (!user?.uid || !db) {
       toast.error('You must be logged in to clear analytics.');
       return;
     }
@@ -672,7 +679,9 @@ export default function DashboardPage() {
 
   // Generate test order - fetches REAL products from Firestore
   const handleGenerateTestOrder = async () => {
-    if (!user?.uid) {
+    const db = getFirebaseDb();
+
+    if (!user?.uid || !db) {
       toast.error('You must be logged in to generate test orders.');
       return;
     }

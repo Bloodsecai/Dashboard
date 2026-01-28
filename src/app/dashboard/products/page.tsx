@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Pencil, Trash2, X, Package, ImageOff, Upload, Loader2, Search } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { getFirebaseDb, isFirebaseReady } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useNotifications } from '@/contexts/NotificationContext';
@@ -473,6 +473,15 @@ export default function ProductsPage() {
 
   // Load products from Firebase with real-time updates
   useEffect(() => {
+    // Get Firebase instance (lazy init, client-side only)
+    const db = getFirebaseDb();
+
+    if (!isFirebaseReady() || !db) {
+      setLoading(false);
+      toast.error('Firebase not ready');
+      return;
+    }
+
     const unsubscribe = onSnapshot(
       collection(db, 'products'),
       (snapshot) => {
@@ -500,6 +509,13 @@ export default function ProductsPage() {
   }, []);
 
   const handleSave = async (formData: ProductFormData, newImageFile?: File) => {
+    const db = getFirebaseDb();
+
+    if (!isFirebaseReady() || !db) {
+      toast.error('Firebase not ready');
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -559,6 +575,13 @@ export default function ProductsPage() {
   };
 
   const handleDelete = async (id: string) => {
+    const db = getFirebaseDb();
+
+    if (!isFirebaseReady() || !db) {
+      toast.error('Firebase not ready');
+      return;
+    }
+
     if (confirm('Are you sure you want to delete this product?')) {
       try {
         await deleteDoc(doc(db, 'products', id));

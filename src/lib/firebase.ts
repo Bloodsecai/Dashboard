@@ -1,4 +1,4 @@
-import { initializeApp, FirebaseApp } from 'firebase/app';
+import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 
@@ -19,13 +19,13 @@ const missingVars = REQUIRED_ENV_VARS.filter(
 );
 
 // Track initialization state - NEVER throw, just track
-export const firebaseInitError: string | null =
+const firebaseInitError: string | null =
   missingVars.length > 0
     ? `Missing Firebase env vars: ${missingVars.join(', ')}. Check Vercel environment variables.`
     : null;
 
-// Log error but DO NOT throw - let UI handle it gracefully
-if (firebaseInitError) {
+// Log error only on client side (not during build)
+if (firebaseInitError && typeof window !== 'undefined') {
   console.error('[Firebase] ' + firebaseInitError);
 }
 
@@ -44,19 +44,53 @@ const firebaseConfig = {
 };
 
 // =============================================================================
-// SAFE INITIALIZATION (NEVER THROWS)
+// LAZY INITIALIZATION (SSR-SAFE - CLIENT-ONLY)
+// Initialize only when needed and only on client-side
 // =============================================================================
 
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
 let initializationError: string | null = firebaseInitError;
+let initialized = false;
 
-// Only initialize if we have the required env vars
-if (!firebaseInitError) {
+/**
+ * Lazily initialize Firebase only when called from client-side code.
+ * This prevents build-time crashes and SSR errors.
+ * 
+ * Safe to call multiple times - only initializes once.
+ */
+function initializeFirebase(): { error: string | null } {
+  // Already initialized - return result
+  if (initialized) {
+    return { error: initializationError };
+  }
+
+  // Not on client-side - skip initialization
+  if (typeof window === 'undefined') {
+    return {
+      error: 'Firebase cannot be initialized on server. This function must only be called from client-side code.',
+    };
+  }
+
+  // Mark as attempted to prevent re-initialization
+  initialized = true;
+
+  // Don't initialize if env vars are missing
+  if (firebaseInitError) {
+    initializationError = firebaseInitError;
+    return { error: initializationError };
+  }
+
   try {
-    app = initializeApp(firebaseConfig);
-    
+    // Check if Firebase already initialized (could be initialized elsewhere)
+    const existingApps = getApps();
+    if (existingApps.length > 0) {
+      app = existingApps[0];
+    } else {
+      app = initializeApp(firebaseConfig);
+    }
+
     // Safely initialize auth and db with null checks
     try {
       auth = getAuth(app);
@@ -74,7 +108,7 @@ if (!firebaseInitError) {
       db = null;
     }
 
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
       console.log('[Firebase] Initialized:', {
         projectId: firebaseConfig.projectId,
         authReady: auth !== null,
@@ -82,35 +116,71 @@ if (!firebaseInitError) {
         error: initializationError,
       });
     }
+
+    return { error: initializationError };
   } catch (error: any) {
     initializationError = error?.message || 'Failed to initialize Firebase';
     console.error('[Firebase] Initialization failed:', initializationError);
     app = null;
     auth = null;
     db = null;
+    return { error: initializationError };
   }
 }
 
 // =============================================================================
-// SAFE EXPORTS
+// SAFE EXPORTS - LAZY GETTERS
 // =============================================================================
 
-// Export auth and db - may be null if init failed
-// Components MUST check isFirebaseReady() before using these
-export { auth, db };
-
-// Check if Firebase is ready to use
-export function isFirebaseReady(): boolean {
-  return auth !== null && db !== null && !initializationError;
+/**
+ * Get Firestore instance. Initializes Firebase if needed.
+ * Safe to call from client-side code only.
+ * Returns null if Firebase initialization failed.
+ */
+export function getFirebaseDb(): Firestore | null {
+  initializeFirebase();
+  return db;
 }
 
-// Get error message if Firebase failed to initialize
+/**
+ * Get Firebase Auth instance. Initializes Firebase if needed.
+ * Safe to call from client-side code only.
+ * Returns null if Firebase initialization failed.
+ */
+export function getFirebaseAuth(): Auth | null {
+  initializeFirebase();
+  return auth;
+}
+
+// For backward compatibility with existing code
+export { db, auth };
+
+// BUT: These exports are only safe when called after initialization!
+// Better to use getFirebaseDb() and getFirebaseAuth() instead.
+
+/**
+ * Check if Firebase is ready to use.
+ * Returns true only if both auth and db are initialized successfully.
+ */
+export function isFirebaseReady(): boolean {
+  initializeFirebase();
+  return auth !== null && db !== null && initializationError === null;
+}
+
+/**
+ * Get error message if Firebase failed to initialize.
+ * Returns null if Firebase is ready.
+ */
 export function getFirebaseError(): string | null {
+  initializeFirebase();
   return initializationError;
 }
 
-// Get config info for debugging
+/**
+ * Get Firebase config for debugging
+ */
 export function getFirebaseConfig() {
+  initializeFirebase();
   return {
     projectId: firebaseConfig.projectId,
     isReady: isFirebaseReady(),

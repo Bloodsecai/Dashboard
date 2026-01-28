@@ -5,7 +5,7 @@ import { Upload, FileText } from 'lucide-react';
 import Papa from 'papaparse';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { db } from '@/lib/firebase';
+import { getFirebaseDb, isFirebaseReady } from '@/lib/firebase';
 import { collection, addDoc, getDocs, query, where, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -78,6 +78,9 @@ export default function ImportPage() {
 
   useEffect(() => {
     const fetchImports = async () => {
+      const db = getFirebaseDb();
+      if (!isFirebaseReady() || !db) return;
+      
       try {
         const querySnapshot = await getDocs(collection(db, 'imports'));
         const importsData = querySnapshot.docs.map(doc => ({
@@ -94,6 +97,13 @@ export default function ImportPage() {
   }, []);
 
   const handleImport = async () => {
+    const db = getFirebaseDb();
+
+    if (!isFirebaseReady() || !db) {
+      toast.error('Firebase not ready');
+      return;
+    }
+
     if (!columnMapping.product || !columnMapping.amount || !columnMapping.date) {
       toast.error('Please map required columns: Product, Amount, and Date');
       return;

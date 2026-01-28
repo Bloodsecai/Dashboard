@@ -9,7 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/hooks/useAuth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { getFirebaseDb, isFirebaseReady } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 
@@ -33,7 +33,9 @@ export default function OrdersPage() {
   // Fetch user's ordersClearedAt timestamp on mount
   useEffect(() => {
     const fetchOrdersPreference = async () => {
-      if (!user?.uid) {
+      const db = getFirebaseDb();
+
+      if (!user?.uid || !db || !isFirebaseReady()) {
         setLoadingPreferences(false);
         return;
       }
@@ -61,7 +63,9 @@ export default function OrdersPage() {
 
   // Clear orders handler
   const handleClearOrders = async () => {
-    if (!user?.uid) {
+    const db = getFirebaseDb();
+
+    if (!user?.uid || !db) {
       toast.error('You must be logged in to clear orders.');
       return;
     }

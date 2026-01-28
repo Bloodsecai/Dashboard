@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { db, isFirebaseReady } from '@/lib/firebase';
+import { getFirebaseDb, isFirebaseReady } from '@/lib/firebase';
 import { subDays, startOfMonth, eachDayOfInterval, format } from 'date-fns';
 import {
   RawSaleDoc,
@@ -146,6 +146,15 @@ export function useDashboardData(periodDays: number = 30) {
   // ============================================================================
 
   useEffect(() => {
+    // Guard: only run on client side
+    if (typeof window === 'undefined') {
+      setLoading(false);
+      return;
+    }
+
+    // Get Firebase instance (lazy init, client-side only)
+    const db = getFirebaseDb();
+
     // GUARD: Ensure Firebase is ready before setting up listeners
     if (!isFirebaseReady() || !db) {
       setLoading(false);

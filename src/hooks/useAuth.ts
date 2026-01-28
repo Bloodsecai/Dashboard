@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { auth, isFirebaseReady, getFirebaseError } from '@/lib/firebase';
+import { getFirebaseAuth, isFirebaseReady, getFirebaseError } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 import { isAdminEmail } from '@/config/admins';
 
@@ -22,6 +22,15 @@ export function useAuth(): UseAuthReturn {
   const router = useRouter();
 
   useEffect(() => {
+    // Guard: only run on client side
+    if (typeof window === 'undefined') {
+      setLoading(false);
+      return;
+    }
+
+    // Get Firebase Auth instance (lazy init, client-side only)
+    const auth = getFirebaseAuth();
+
     // Check if Firebase is properly initialized
     if (!isFirebaseReady()) {
       const error = getFirebaseError();
@@ -39,37 +48,50 @@ export function useAuth(): UseAuthReturn {
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      try {
-        setUser(currentUser);
+    try {
+      const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        try {
+          setUser(currentUser);
 
-        if (currentUser?.email) {
-          const adminStatus = isAdminEmail(currentUser.email);
-          setIsAdmin(adminStatus);
+          if (currentUser?.email) {
+            const adminStatus = isAdminEmail(currentUser.email);
+            setIsAdmin(adminStatus);
 
-          // If not admin, redirect to access denied
-          if (!adminStatus) {
-            router.push('/access-denied');
+            // If not admin, redirect to access denied
+            if (!adminStatus) {
+              router.push('/access-denied');
+            }
+          } else {
+            setIsAdmin(false);
+            // If not logged in, redirect to login
+            router.push('/login');
           }
-        } else {
-          setIsAdmin(false);
-          // If not logged in, redirect to login
-          router.push('/login');
+        } catch (error) {
+          console.error('[useAuth] Error in onAuthStateChanged callback:', error);
+          setFirebaseError('Failed to process authentication');
+        } finally {
+          setLoading(false);
         }
-      } catch (error) {
-        console.error('[useAuth] Error in onAuthStateChanged callback:', error);
-        setFirebaseError('Failed to process authentication');
-      } finally {
-        setLoading(false);
-      }
-    });
+      });
 
-    return () => unsubscribe();
+      return () => unsubscribe();
+    } catch (error) {
+      console.error('[useAuth] Exception setting up auth listener:', error);
+      setFirebaseError('Failed to set up authentication');
+      setLoading(false);
+    }
   }, [router]);
 
   const logout = async () => {
+    const auth = getFirebaseAuth();
+
     if (!auth) {
-      throw new Error('Firebase Auth not initialized');
+      console.error('[useAuth] Firebase Auth not initialized, cannot logout');
+      // Fallback: clear local state and redirect
+      setUser(null);
+      setIsAdmin(false);
+      router.push('/login');
+      return;
     }
 
     try {
@@ -77,7 +99,8 @@ export function useAuth(): UseAuthReturn {
       router.push('/login');
     } catch (error) {
       console.error('Logout error:', error);
-      throw error;
+      // Fallback: still redirect to login even if signOut fails
+      router.push('/login');
     }
   };
 
