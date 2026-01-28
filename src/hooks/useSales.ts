@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { getFirebaseDb } from '@/lib/firebase';
 import { Sale } from '@/types';
 
 export function useSales() {
@@ -20,6 +20,13 @@ export function useSales() {
   }, []);
 
   useEffect(() => {
+    const db = getFirebaseDb();
+    if (!db) {
+      setErrorMsg('Firestore not initialized. Check Firebase env vars.');
+      setLoading(false);
+      return;
+    }
+
     let serverReadyLocal = false;
     setLoading(true);
     setErrorMsg(null);
@@ -110,6 +117,9 @@ export function useSales() {
   }, [listenerKey]);
 
   const addSale = async (saleData: Omit<Sale, 'id' | 'createdAt'>) => {
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
+
     await addDoc(collection(db, 'sales'), {
       ...saleData,
       createdAt: serverTimestamp(),
@@ -117,10 +127,16 @@ export function useSales() {
   };
 
   const updateSale = async (id: string, updates: Partial<Sale>) => {
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
+
     await updateDoc(doc(db, 'sales', id), updates);
   };
 
   const deleteSale = async (id: string) => {
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
+
     await deleteDoc(doc(db, 'sales', id));
   };
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { collection, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, query, orderBy, limit } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { getFirebaseDb } from '@/lib/firebase';
 import { Activity, ActivityType } from '@/types';
 
 export function useActivities(maxItems?: number) {
@@ -20,6 +20,13 @@ export function useActivities(maxItems?: number) {
   }, []);
 
   useEffect(() => {
+    const db = getFirebaseDb();
+    if (!db) {
+      setErrorMsg('Firestore not initialized. Check Firebase env vars.');
+      setLoading(false);
+      return;
+    }
+
     let serverReadyLocal = false;
     setLoading(true);
     setErrorMsg(null);
@@ -118,6 +125,9 @@ export function useActivities(maxItems?: number) {
     salesId?: string;
     customerId?: string;
   }) => {
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
+
     await addDoc(collection(db, 'activities'), {
       ...activityData,
       createdAt: serverTimestamp(),
@@ -125,6 +135,9 @@ export function useActivities(maxItems?: number) {
   };
 
   const deleteActivity = async (id: string) => {
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
+
     await deleteDoc(doc(db, 'activities', id));
   };
 

@@ -14,7 +14,7 @@ import {
   addDoc,
   serverTimestamp,
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { getFirebaseDb } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 
 export interface Notification {
@@ -61,6 +61,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const db = getFirebaseDb();
+    if (!db) {
+      console.warn('[Notifications] Firestore not initialized');
+      setIsLoading(false);
+      return;
+    }
+
     const notificationsQuery = query(
       collection(db, 'notifications'),
       where('userId', '==', user.uid),
@@ -94,6 +101,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     if (!user?.uid || notifications.length === 0) return;
 
     try {
+      const db = getFirebaseDb();
+      if (!db) return;
+
       const batch = writeBatch(db);
       notifications.forEach((notif) => {
         if (!notif.read) {
@@ -109,6 +119,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   const markAsRead = useCallback(async (notificationId: string) => {
     try {
+      const db = getFirebaseDb();
+      if (!db) return;
+
       const batch = writeBatch(db);
       const notifRef = doc(db, 'notifications', notificationId);
       batch.update(notifRef, { read: true });
@@ -123,6 +136,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       if (!user?.uid) return;
 
       try {
+        const db = getFirebaseDb();
+        if (!db) return;
+
         await addDoc(collection(db, 'notifications'), {
           ...notification,
           userId: user.uid,

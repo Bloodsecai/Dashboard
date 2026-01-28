@@ -14,7 +14,7 @@ import {
   getDocs,
   orderBy,
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { getFirebaseDb } from '@/lib/firebase';
 import { Customer, Sale } from '@/types';
 
 export function useCustomers() {
@@ -34,6 +34,13 @@ export function useCustomers() {
   }, []);
 
   useEffect(() => {
+    const db = getFirebaseDb();
+    if (!db) {
+      setErrorMsg('Firestore not initialized. Check Firebase env vars.');
+      setLoading(false);
+      return;
+    }
+
     let serverReadyLocal = false;
     setLoading(true);
     setErrorMsg(null);
@@ -125,6 +132,9 @@ export function useCustomers() {
   }, [listenerKey]);
 
   const addCustomer = async (customerData: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'totalSpent' | 'orderCount'>) => {
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
+
     const docRef = await addDoc(collection(db, 'customers'), {
       ...customerData,
       totalSpent: 0,
@@ -137,6 +147,9 @@ export function useCustomers() {
   };
 
   const updateCustomer = async (id: string, updates: Partial<Omit<Customer, 'id' | 'createdAt'>>) => {
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
+
     await updateDoc(doc(db, 'customers', id), {
       ...updates,
       updatedAt: serverTimestamp(),
@@ -144,12 +157,18 @@ export function useCustomers() {
   };
 
   const deleteCustomer = async (id: string) => {
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
+
     await deleteDoc(doc(db, 'customers', id));
   };
 
   const addCustomField = async (id: string, fieldName: string, fieldValue: string) => {
     const customer = customers.find(c => c.id === id);
     if (!customer) throw new Error('Customer not found');
+
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
 
     const updatedCustomFields = {
       ...(customer.customFields || {}),
@@ -166,6 +185,9 @@ export function useCustomers() {
     const customer = customers.find(c => c.id === id);
     if (!customer) throw new Error('Customer not found');
 
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firestore not initialized');
+
     const updatedCustomFields = { ...(customer.customFields || {}) };
     delete updatedCustomFields[fieldName];
 
@@ -176,6 +198,9 @@ export function useCustomers() {
   };
 
   const getCustomerByName = async (name: string): Promise<Customer | null> => {
+    const db = getFirebaseDb();
+    if (!db) return null;
+
     const q = query(collection(db, 'customers'), where('name', '==', name));
     const snapshot = await getDocs(q);
     if (snapshot.empty) return null;

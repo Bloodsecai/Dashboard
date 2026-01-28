@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { db, auth } from '@/lib/firebase';
+import { getFirebaseDb, getFirebaseAuth } from '@/lib/firebase';
 
 type Theme = 'light' | 'dark';
 export type ColorPalette = 'purple' | 'blue' | 'emerald' | 'rose' | 'orange' | 'indigo';
@@ -116,6 +116,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   // Listen for auth state changes
   useEffect(() => {
+    const auth = getFirebaseAuth();
+    if (!auth) {
+      setCurrentUser(null);
+      return;
+    }
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
     });
@@ -131,6 +137,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
+        const db = getFirebaseDb();
+        if (!db) {
+          console.warn('[Theme] Firestore not initialized');
+          setIsLoadingPalette(false);
+          return;
+        }
+
         const userDocRef = doc(db, 'users', currentUser.uid);
         const userDoc = await getDoc(userDocRef);
 
@@ -182,14 +195,17 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     // Save to Firestore if user is logged in
     if (currentUser?.uid) {
       try {
-        const userDocRef = doc(db, 'users', currentUser.uid);
-        await setDoc(userDocRef, {
-          preferences: {
-            theme: {
-              palette: newPalette
+        const db = getFirebaseDb();
+        if (db) {
+          const userDocRef = doc(db, 'users', currentUser.uid);
+          await setDoc(userDocRef, {
+            preferences: {
+              theme: {
+                palette: newPalette
+              }
             }
-          }
-        }, { merge: true });
+          }, { merge: true });
+        }
       } catch (error) {
         console.error('Error saving palette preference:', error);
       }

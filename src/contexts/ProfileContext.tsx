@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { updateProfile } from 'firebase/auth';
-import { db } from '@/lib/firebase';
+import { getFirebaseDb } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 
@@ -54,11 +54,14 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       }
 
       // Then check Firestore for potentially newer profile picture
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
-      if (userDoc.exists()) {
-        const data = userDoc.data();
-        if (data.profilePicture) {
-          setProfilePicture(data.profilePicture);
+      const db = getFirebaseDb();
+      if (db) {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          if (data.profilePicture) {
+            setProfilePicture(data.profilePicture);
+          }
         }
       }
     } catch (error) {
@@ -90,6 +93,13 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     try {
       // Update Firebase Auth profile
       await updateProfile(user, { photoURL: url || null });
+
+      const db = getFirebaseDb();
+      if (!db) {
+        toast.error('Firestore not available');
+        setIsSaving(false);
+        return;
+      }
 
       // Check if user document exists
       const userDocRef = doc(db, 'users', user.uid);

@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { getFirebaseDb } from '@/lib/firebase';
 import { useAuth } from '@/components/auth/AuthProvider';
 
 type Currency = 'PHP' | 'USD' | 'EUR' | 'GBP' | 'JPY' | 'SGD' | 'MYR';
@@ -37,6 +37,14 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
     const fetchCurrencyPreference = async () => {
       if (user?.uid) {
         try {
+          const db = getFirebaseDb();
+          if (!db) {
+            console.warn('[Currency] Firestore not initialized');
+            setCurrencyState('PHP');
+            hasFetchedRef.current = true;
+            return;
+          }
+
           const userDocRef = doc(db, 'users', user.uid);
           const userDoc = await getDoc(userDocRef);
 
@@ -73,12 +81,15 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
     // Save to Firestore if user is authenticated
     if (user?.uid) {
       try {
-        const userDocRef = doc(db, 'users', user.uid);
-        await setDoc(userDocRef, {
-          preferences: {
-            currency: newCurrency
-          }
-        }, { merge: true });
+        const db = getFirebaseDb();
+        if (db) {
+          const userDocRef = doc(db, 'users', user.uid);
+          await setDoc(userDocRef, {
+            preferences: {
+              currency: newCurrency
+            }
+          }, { merge: true });
+        }
       } catch (error) {
         console.error('Error saving currency preference:', error);
       }

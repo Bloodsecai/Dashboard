@@ -3,7 +3,7 @@ import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 
 // =============================================================================
-// ENVIRONMENT VARIABLE VALIDATION (SAFE - NEVER THROWS)
+// ENVIRONMENT VARIABLE VALIDATION & LOGGING
 // =============================================================================
 
 const REQUIRED_ENV_VARS = [
@@ -18,6 +18,25 @@ const missingVars = REQUIRED_ENV_VARS.filter(
   (varName) => !process.env[varName]
 );
 
+// Runtime logger (client-side only) - NEVER logs actual secret values
+const logEnvStatus = () => {
+  if (typeof window === 'undefined') return;
+  
+  const envStatus = {
+    apiKey: !!process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    authDomain: !!process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    projectId: !!process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    appId: !!process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+    storageBucket: !!process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: !!process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+    measurementId: !!process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  };
+  
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[Firebase] Env Status (production):', envStatus);
+  }
+};
+
 // Track initialization state - NEVER throw, just track
 const firebaseInitError: string | null =
   missingVars.length > 0
@@ -26,7 +45,8 @@ const firebaseInitError: string | null =
 
 // Log error only on client side (not during build)
 if (firebaseInitError && typeof window !== 'undefined') {
-  console.error('[Firebase] ' + firebaseInitError);
+  console.error('[Firebase] Initialization Error:', firebaseInitError);
+  logEnvStatus();
 }
 
 // =============================================================================
@@ -133,21 +153,19 @@ function initializeFirebase(): { error: string | null } {
 // =============================================================================
 
 // =============================================================================
-// GUARANTEED EXPORTS (Non-nullable for direct usage)
-// These exports provide guaranteed Firestore | Auth instances
-// by initializing Firebase and returning the instances
+// SAFE EXPORTS - GETTER FUNCTIONS (Recommended for all new code)
 // =============================================================================
 
 /**
  * Get guaranteed non-null Firestore instance.
  * Initializes Firebase on first call.
  * Safe for client-side code only.
- * Throws if Firebase configuration is missing or initialization fails.
+ * @throws Error if Firebase configuration is missing
  */
 export function getDb(): Firestore {
   initializeFirebase();
   if (!db) {
-    throw new Error('[Firebase] Firestore initialization failed. Check env vars and Firestore rules.');
+    throw new Error('[Firebase] Firestore not initialized. Check env vars.');
   }
   return db;
 }
@@ -156,19 +174,18 @@ export function getDb(): Firestore {
  * Get guaranteed non-null Auth instance.
  * Initializes Firebase on first call.
  * Safe for client-side code only.
- * Throws if Firebase configuration is missing or initialization fails.
+ * @throws Error if Firebase configuration is missing
  */
 export function getAuthInstance(): Auth {
   initializeFirebase();
   if (!auth) {
-    throw new Error('[Firebase] Auth initialization failed. Check env vars and Firebase configuration.');
+    throw new Error('[Firebase] Auth not initialized. Check env vars.');
   }
   return auth;
 }
 
 /**
  * Get Firestore instance or null if initialization failed.
- * Initializes Firebase on first call.
  * Safe for client-side code only.
  */
 export function getFirebaseDb(): Firestore | null {
@@ -178,36 +195,12 @@ export function getFirebaseDb(): Firestore | null {
 
 /**
  * Get Auth instance or null if initialization failed.
- * Initializes Firebase on first call.
  * Safe for client-side code only.
  */
 export function getFirebaseAuth(): Auth | null {
   initializeFirebase();
   return auth;
 }
-
-// Lazy-loaded guaranteed exports - type-safe non-nullable versions
-// These execute getDb() and getAuthInstance() on access
-// Reduces circular dependency issues while maintaining type safety
-const dbExport = new Proxy({} as Firestore, {
-  get(target, prop) {
-    return (getDb() as any)[prop];
-  },
-  apply(target, thisArg, args) {
-    return (getDb() as any)(...args);
-  },
-}) as Firestore;
-
-const authExport = new Proxy({} as Auth, {
-  get(target, prop) {
-    return (getAuthInstance() as any)[prop];
-  },
-  apply(target, thisArg, args) {
-    return (getAuthInstance() as any)(...args);
-  },
-}) as Auth;
-
-export { dbExport as db, authExport as auth };
 
 /**
  * Check if Firebase is ready to use.
