@@ -153,7 +153,7 @@ export function useFirestoreSubscription<T>(
 
     const configResult = getFirebaseConfig();
     debugLog(`Subscribing to ${collectionName}`, {
-      projectId: configResult.ok ? configResult.config.projectId : 'unknown',
+      projectId: configResult?.projectId || 'unknown',
       timeout,
       skipCache,
     });
@@ -171,6 +171,7 @@ export function useFirestoreSubscription<T>(
     // Subscribe to Firestore
     const unsubscribe = onSnapshot(
       query,
+      { includeMetadataChanges: true },
       (snapshot) => {
         const fromCache = snapshot.metadata.fromCache;
 

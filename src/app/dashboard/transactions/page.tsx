@@ -28,9 +28,250 @@ interface FirestoreOrder {
 }
 
 export default function TransactionsPage() {
+  // ===== ALL HOOKS MUST BE AT THE TOP (before any returns) =====
   const { formatAmount } = useCurrency();
   const { user, loading: authLoading, firebaseError } = useAuth();
 
+  // Firestore orders state (realtime)
+  const [orders, setOrders] = useState<FirestoreOrder[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+  const [isServerReady, setIsServerReady] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [listenerKey, setListenerKey] = useState(0);
+
+  // UI state
+  const [search, setSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Clear transactions state
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [analyticsResetTimestamp, setAnalyticsResetTimestamp] = useState<Date | null>(null);
+  const [loadingPreferences, setLoadingPreferences] = useState(true);
+
+  const pageSize = 10;
+
+  // Realtime listener for orders collection
+  useEffect(() => {
+    const db = getFirebaseDb();
+    if (!firebaseReady || !db || !user?.uid) {
+      setLoadingOrders(false);
+      setErrorMsg('Firebase not ready or user not authenticated');
+      return;
+    }
+    let serverReadyLocal = false;
+    setLoadingOrders(true);
+    setErrorMsg(null);
+    setOrders([]);
+    const ordersQuery = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+    const isDev = process.env.NODE_ENV !== 'production';
+    if (isDev) {
+      console.log('[Transactions] Subscribing to orders collection');
+    }
+    const timeoutId = setTimeout(() => {
+      if (!serverReadyLocal) {
+        setLoadingOrders(false);
+        setErrorMsg("Can't reach Firestore. Check Vercel env vars or Firestore rules.");
+        if (isDev) {
+          console.error('[Transactions] Timeout: No server response after 6 seconds');
+        }
+      }
+    }, 6000);
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = onSnapshot(
+        ordersQuery,
+        { includeMetadataChanges: true },
+        (snapshot) => {
+          const fromCache = snapshot.metadata.fromCache;
+          if (isDev) {
+            console.log('[Transactions] Snapshot received:', {
+              fromCache,
+              docCount: snapshot.docs.length,
+              serverReady: serverReadyLocal,
+            });
+          }
+          if (fromCache && !serverReadyLocal) {
+            return;
+          }
+          const ordersData: FirestoreOrder[] = snapshot.docs.map((doc) => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              orderId: data.orderId || doc.id,
+              productId: data.productId || '',
+              productName: data.productName || data.product || 'Unknown Product',
+              productImage: data.productImage || data.image || '',
+              amount: data.amount || 0,
+              customer: data.customer || 'Unknown',
+              paymentMethod: data.paymentMethod || 'Unknown',
+              status: data.status || 'ordered',
+              createdAt: data.createdAt?.toDate?.() || new Date(),
+            };
+          });
+          setOrders(ordersData);
+          if (!fromCache) {
+            serverReadyLocal = true;
+            setIsServerReady(true);
+            clearTimeout(timeoutId);
+            setErrorMsg(null);
+          }
+          setLoadingOrders(false);
+        },
+        (error: any) => {
+          const errorCode = error?.code || 'unknown';
+          const errorMessage = error?.message || 'Failed to load transactions';
+          if (isDev) {
+            console.error('[Transactions] Firestore error:', {
+              code: errorCode,
+              message: errorMessage,
+              fullError: error,
+            });
+          } else {
+            console.error('[Transactions] Firestore error:', errorCode);
+          }
+          clearTimeout(timeoutId);
+          let userMessage = errorMessage;
+          if (errorCode === 'permission-denied') {
+            userMessage = 'Permission denied. Check Firestore security rules.';
+          } else if (errorCode === 'unavailable') {
+            userMessage = "Can't reach Firestore. Check your internet connection.";
+          } else if (errorCode === 'unauthenticated') {
+            userMessage = 'Authentication required. Please sign in again.';
+          }
+          setErrorMsg(userMessage);
+          setLoadingOrders(false);
+        }
+      );
+    } catch (error: any) {
+      console.error('[Transactions] Exception in listener setup:', error);
+      setLoadingOrders(false);
+      setErrorMsg('Failed to set up real-time updates. Please refresh the page.');
+      clearTimeout(timeoutId);
+    }
+    return () => {
+      clearTimeout(timeoutId);
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [listenerKey, user?.uid]);
+
+  // Fetch user's analytics reset timestamp on mount
+  useEffect(() => {
+    const fetchAnalyticsPreference = async () => {
+      const db = getFirebaseDb();
+      if (!user?.uid || !db || !firebaseReady) {
+        setLoadingPreferences(false);
+        return;
+      }
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          const resetTimestamp = data?.preferences?.analyticsResetTimestamp;
+          if (resetTimestamp) {
+            setAnalyticsResetTimestamp(
+              resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp)
+            );
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching analytics preference:', error);
+      } finally {
+        setLoadingPreferences(false);
+      }
+    };
+    fetchAnalyticsPreference();
+  }, [user]);
+
+  // Filter orders based on analytics reset timestamp
+  const filteredOrders = useMemo(() => {
+    if (!analyticsResetTimestamp) return orders;
+    return orders.filter((order) => order.createdAt > analyticsResetTimestamp);
+  }, [orders, analyticsResetTimestamp]);
+
+  // Apply search filter
+  const searchedOrders = useMemo(() => {
+    if (!search) return filteredOrders;
+    const searchLower = search.toLowerCase();
+    return filteredOrders.filter(
+      (order) =>
+        order.orderId.toLowerCase().includes(searchLower) ||
+        order.customer.toLowerCase().includes(searchLower) ||
+        order.productName.toLowerCase().includes(searchLower)
+    );
+  }, [filteredOrders, search]);
+
+  // Calculate totals
+  const totalAmount = searchedOrders.reduce((sum, order) => sum + order.amount, 0);
+
+  // Pagination
+  const totalPages = Math.ceil(searchedOrders.length / pageSize);
+  const paginatedOrders = searchedOrders.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  );
+
+  // Status badge color
+  const getStatusColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'paid':
+      case 'completed':
+        return 'bg-green-500/20 text-green-400 border-green-500/30';
+      case 'ordered':
+      case 'pending':
+        return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
+      case 'cancelled':
+      case 'failed':
+        return 'bg-red-500/20 text-red-400 border-red-500/30';
+      default:
+        return 'bg-slate-500/20 text-slate-400 border-slate-500/30';
+    }
+  };
+
+  // Retry handler: resets state and re-creates the listener
+  const handleRetry = () => {
+    setIsServerReady(false);
+    setErrorMsg(null);
+    setLoadingOrders(true);
+    setListenerKey((prev) => prev + 1);
+  };
+
+  // Clear transactions handler
+  const handleClearTransactions = async () => {
+    const db = getFirebaseDb();
+    if (!user?.uid || !db) {
+      toast.error('You must be logged in to clear transactions.');
+      return;
+    }
+    setIsClearing(true);
+    try {
+      const now = new Date();
+      const userDocRef = doc(db, 'users', user.uid);
+      await setDoc(
+        userDocRef,
+        {
+          preferences: {
+            analyticsResetTimestamp: now,
+          },
+        },
+        { merge: true }
+      );
+      setAnalyticsResetTimestamp(now);
+      setShowClearModal(false);
+      setCurrentPage(1);
+      toast.success('Transactions cleared.');
+    } catch (error) {
+      console.error('Error clearing transactions:', error);
+      toast.error('Failed to clear transactions.');
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  // ===== NOW WE CAN DO EARLY RETURNS =====
   // Show Firebase init error
   if (!firebaseReady) {
     return (
@@ -75,286 +316,6 @@ export default function TransactionsPage() {
       />
     );
   }
-
-  // Firestore orders state (realtime)
-  const [orders, setOrders] = useState<FirestoreOrder[]>([]);
-  const [loadingOrders, setLoadingOrders] = useState(true);
-  const [isServerReady, setIsServerReady] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [listenerKey, setListenerKey] = useState(0); // Used to force re-create listener on retry
-
-  // UI state
-  const [search, setSearch] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 10;
-
-  // Clear transactions state
-  const [showClearModal, setShowClearModal] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
-  const [analyticsResetTimestamp, setAnalyticsResetTimestamp] = useState<Date | null>(null);
-  const [loadingPreferences, setLoadingPreferences] = useState(true);
-
-  // Realtime listener for orders collection
-  // Only render data from server (not cache) to prevent ghost rows
-  useEffect(() => {
-    // Get Firebase instance (lazy init, client-side only)
-    const db = getFirebaseDb();
-
-    // GUARD: Ensure Firebase and auth are ready
-    if (!firebaseReady || !db || !user?.uid) {
-      setLoadingOrders(false);
-      setErrorMsg('Firebase not ready or user not authenticated');
-      return;
-    }
-
-    // Reset state when starting/retrying listener
-    let serverReadyLocal = false;
-    setLoadingOrders(true);
-    setErrorMsg(null);
-    setOrders([]); // Clear stale data immediately to prevent ghost rows
-
-    // Query orders sorted by date (most recent first)
-    const ordersQuery = query(
-      collection(db, 'orders'),
-      orderBy('createdAt', 'desc')
-    );
-
-    // Debug logging in development
-    const isDev = process.env.NODE_ENV !== 'production';
-    if (isDev) {
-      console.log('[Transactions] Subscribing to orders collection');
-    }
-
-    // Timeout fallback: if server data doesn't arrive within 6 seconds, show error
-    const timeoutId = setTimeout(() => {
-      if (!serverReadyLocal) {
-        setLoadingOrders(false);
-        setErrorMsg("Can't reach Firestore. Check Vercel env vars or Firestore rules.");
-        if (isDev) {
-          console.error('[Transactions] Timeout: No server response after 6 seconds');
-        }
-      }
-    }, 6000);
-
-    let unsubscribe: (() => void) | undefined;
-
-    try {
-      unsubscribe = onSnapshot(
-        ordersQuery,
-      (snapshot) => {
-        // Check if this is from cache or server
-        const fromCache = snapshot.metadata.fromCache;
-
-        // Debug logging in development
-        if (isDev) {
-          console.log('[Transactions] Snapshot received:', {
-            fromCache,
-            docCount: snapshot.docs.length,
-            serverReady: serverReadyLocal,
-          });
-        }
-
-        // If from cache and server not ready yet, skip updating state
-        // This prevents ghost rows from appearing during initial load
-        if (fromCache && !serverReadyLocal) {
-          return;
-        }
-
-        const ordersData: FirestoreOrder[] = snapshot.docs.map((doc) => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            orderId: data.orderId || doc.id,
-            productId: data.productId || '',
-            productName: data.productName || data.product || 'Unknown Product',
-            productImage: data.productImage || data.image || '',
-            amount: data.amount || 0,
-            customer: data.customer || 'Unknown',
-            paymentMethod: data.paymentMethod || 'Unknown',
-            status: data.status || 'ordered',
-            createdAt: data.createdAt?.toDate?.() || new Date(),
-          };
-        });
-
-        setOrders(ordersData);
-
-        // Mark server as ready once we get server data
-        if (!fromCache) {
-          serverReadyLocal = true;
-          setIsServerReady(true);
-          clearTimeout(timeoutId);
-          setErrorMsg(null);
-        }
-
-        setLoadingOrders(false);
-      },
-      (error: any) => {
-        // Enhanced error logging with Firebase error code
-        const errorCode = error?.code || 'unknown';
-        const errorMessage = error?.message || 'Failed to load transactions';
-
-        if (isDev) {
-          console.error('[Transactions] Firestore error:', {
-            code: errorCode,
-            message: errorMessage,
-            fullError: error,
-          });
-        } else {
-          console.error('[Transactions] Firestore error:', errorCode);
-        }
-
-        clearTimeout(timeoutId);
-
-        // Provide user-friendly error messages
-        let userMessage = errorMessage;
-        if (errorCode === 'permission-denied') {
-          userMessage = 'Permission denied. Check Firestore security rules.';
-        } else if (errorCode === 'unavailable') {
-          userMessage = "Can't reach Firestore. Check your internet connection.";
-        } else if (errorCode === 'unauthenticated') {
-          userMessage = 'Authentication required. Please sign in again.';
-        }
-
-        setErrorMsg(userMessage);
-        setLoadingOrders(false);
-      }
-      );
-    } catch (error: any) {
-      console.error('[Transactions] Exception in listener setup:', error);
-      setLoadingOrders(false);
-      setErrorMsg('Failed to set up real-time updates. Please refresh the page.');
-      clearTimeout(timeoutId);
-    }
-
-    return () => {
-      clearTimeout(timeoutId);
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
-  }, [listenerKey, user?.uid]);
-
-  // Fetch user's analytics reset timestamp on mount
-  useEffect(() => {
-    const fetchAnalyticsPreference = async () => {
-      const db = getFirebaseDb();
-
-      if (!user?.uid || !db || !firebaseReady) {
-        setLoadingPreferences(false);
-        return;
-      }
-
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
-
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          const resetTimestamp = data?.preferences?.analyticsResetTimestamp;
-          if (resetTimestamp) {
-            setAnalyticsResetTimestamp(
-              resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp)
-            );
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching analytics preference:', error);
-      } finally {
-        setLoadingPreferences(false);
-      }
-    };
-
-    fetchAnalyticsPreference();
-  }, [user]);
-
-  // Clear transactions handler
-  const handleClearTransactions = async () => {
-    const db = getFirebaseDb();
-
-    if (!user?.uid || !db) {
-      toast.error('You must be logged in to clear transactions.');
-      return;
-    }
-
-    setIsClearing(true);
-    try {
-      const now = new Date();
-      const userDocRef = doc(db, 'users', user.uid);
-      await setDoc(
-        userDocRef,
-        {
-          preferences: {
-            analyticsResetTimestamp: now,
-          },
-        },
-        { merge: true }
-      );
-
-      setAnalyticsResetTimestamp(now);
-      setShowClearModal(false);
-      setCurrentPage(1);
-      toast.success('Transactions cleared.');
-    } catch (error) {
-      console.error('Error clearing transactions:', error);
-      toast.error('Failed to clear transactions.');
-    } finally {
-      setIsClearing(false);
-    }
-  };
-
-  // Filter orders based on analytics reset timestamp
-  const filteredOrders = useMemo(() => {
-    if (!analyticsResetTimestamp) return orders;
-    return orders.filter((order) => order.createdAt > analyticsResetTimestamp);
-  }, [orders, analyticsResetTimestamp]);
-
-  // Apply search filter
-  const searchedOrders = useMemo(() => {
-    if (!search) return filteredOrders;
-
-    const searchLower = search.toLowerCase();
-    return filteredOrders.filter(
-      (order) =>
-        order.orderId.toLowerCase().includes(searchLower) ||
-        order.customer.toLowerCase().includes(searchLower) ||
-        order.productName.toLowerCase().includes(searchLower)
-    );
-  }, [filteredOrders, search]);
-
-  // Calculate totals
-  const totalAmount = searchedOrders.reduce((sum, order) => sum + order.amount, 0);
-
-  // Pagination
-  const totalPages = Math.ceil(searchedOrders.length / pageSize);
-  const paginatedOrders = searchedOrders.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
-  // Status badge color
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'paid':
-      case 'completed':
-        return 'bg-green-500/20 text-green-400 border-green-500/30';
-      case 'ordered':
-      case 'pending':
-        return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
-      case 'cancelled':
-      case 'failed':
-        return 'bg-red-500/20 text-red-400 border-red-500/30';
-      default:
-        return 'bg-slate-500/20 text-slate-400 border-slate-500/30';
-    }
-  };
-
-  // Retry handler: resets state and re-creates the listener
-  const handleRetry = () => {
-    setIsServerReady(false);
-    setErrorMsg(null);
-    setLoadingOrders(true);
-    setListenerKey((prev) => prev + 1);
-  };
 
   // Show error state with retry button
   if (errorMsg && !isServerReady) {

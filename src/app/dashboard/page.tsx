@@ -387,9 +387,387 @@ function ProductThumbnail({ src, alt }: { src?: string; alt: string }) {
 }
 
 export default function DashboardPage() {
+  // ===== ALL HOOKS MUST BE AT THE TOP (before any returns) =====
   const { formatAmount } = useCurrency();
   const { user, loading: authLoading, firebaseError: authError } = useAuth();
+  const { palette } = useTheme();
+  const themeColors = COLOR_PALETTES[palette];
 
+  // Firestore orders state (realtime)
+  const [orders, setOrders] = useState<FirestoreOrder[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+  const [isServerReady, setIsServerReady] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [listenerKey, setListenerKey] = useState(0); // Used to force re-create listener on retry
+
+  // UI state
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [analyticsResetTimestamp, setAnalyticsResetTimestamp] = useState<Date | null>(null);
+  const [loadingPreferences, setLoadingPreferences] = useState(true);
+  const [isGeneratingOrder, setIsGeneratingOrder] = useState(false);
+  const [salesTimeRange, setSalesTimeRange] = useState<'7d' | '14d' | '1m' | '1y'>('1y');
+
+  // View toggle state (purely presentational - does not affect data)
+  const [salesReportView, setSalesReportView] = useState<'donut' | 'standard'>('donut');
+  const [trafficAnalyticsView, setTrafficAnalyticsView] = useState<'donut' | 'standard'>('donut');
+
+  // Realtime listener for orders collection
+  useEffect(() => {
+    const db = getFirebaseDb();
+    if (!firebaseReady || !db || !user?.uid) {
+      setLoadingOrders(false);
+      setErrorMsg('Firebase not ready or user not authenticated');
+      return;
+    }
+    let serverReadyLocal = false;
+    setLoadingOrders(true);
+    setErrorMsg(null);
+    setOrders([]);
+    const ordersQuery = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+    const isDev = process.env.NODE_ENV !== 'production';
+    if (isDev) {
+      console.log('[Dashboard] Subscribing to orders collection');
+    }
+    const timeoutId = setTimeout(() => {
+      if (!serverReadyLocal) {
+        setLoadingOrders(false);
+        setErrorMsg("Can't reach Firestore. Check Vercel env vars or Firestore rules.");
+        if (isDev) {
+          console.error('[Dashboard] Timeout: No server response after 6 seconds');
+        }
+      }
+    }, 6000);
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = onSnapshot(
+        ordersQuery,
+        { includeMetadataChanges: true },
+        (snapshot) => {
+          const fromCache = snapshot.metadata.fromCache;
+          if (isDev) {
+            console.log('[Dashboard] Snapshot received:', {
+              fromCache,
+              docCount: snapshot.docs.length,
+              serverReady: serverReadyLocal,
+            });
+          }
+          if (fromCache && !serverReadyLocal) {
+            return;
+          }
+          const ordersData: FirestoreOrder[] = snapshot.docs.map((doc) => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              orderId: data.orderId || doc.id,
+              productId: data.productId || '',
+              productName: data.productName || data.product || 'Unknown Product',
+              productImage: data.productImage || data.image || '',
+              amount: data.amount || 0,
+              customer: data.customer || 'Unknown',
+              paymentMethod: data.paymentMethod || 'Unknown',
+              status: data.status || 'ordered',
+              createdAt: data.createdAt?.toDate?.() || new Date(),
+            };
+          });
+          setOrders(ordersData);
+          if (!fromCache) {
+            serverReadyLocal = true;
+            setIsServerReady(true);
+            clearTimeout(timeoutId);
+            setErrorMsg(null);
+          }
+          setLoadingOrders(false);
+        },
+        (error: any) => {
+          const errorCode = error?.code || 'unknown';
+          const errorMessage = error?.message || 'Failed to load orders';
+          if (isDev) {
+            console.error('[Dashboard] Firestore error:', {
+              code: errorCode,
+              message: errorMessage,
+              fullError: error,
+            });
+          } else {
+            console.error('[Dashboard] Firestore error:', errorCode);
+          }
+          clearTimeout(timeoutId);
+          let userMessage = errorMessage;
+          if (errorCode === 'permission-denied') {
+            userMessage = 'Permission denied. Check Firestore security rules.';
+          } else if (errorCode === 'unavailable') {
+            userMessage = "Can't reach Firestore. Check your internet connection.";
+          } else if (errorCode === 'unauthenticated') {
+            userMessage = 'Authentication required. Please sign in again.';
+          }
+          setErrorMsg(userMessage);
+          setLoadingOrders(false);
+        }
+      );
+    } catch (error: any) {
+      console.error('[Dashboard] Exception in listener setup:', error);
+      setLoadingOrders(false);
+      setErrorMsg('Failed to set up real-time updates. Please refresh the page.');
+      clearTimeout(timeoutId);
+    }
+    return () => {
+      clearTimeout(timeoutId);
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [listenerKey, user?.uid]);
+
+  // Fetch user's analytics reset timestamp on mount
+  useEffect(() => {
+    const fetchAnalyticsPreference = async () => {
+      const db = getFirebaseDb();
+      if (!user?.uid || !db || !firebaseReady) {
+        setLoadingPreferences(false);
+        return;
+      }
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          const resetTimestamp = data?.preferences?.analyticsResetTimestamp;
+          if (resetTimestamp) {
+            setAnalyticsResetTimestamp(
+              resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp)
+            );
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching analytics preference:', error);
+      } finally {
+        setLoadingPreferences(false);
+      }
+    };
+    fetchAnalyticsPreference();
+  }, [user]);
+
+  // Filter orders based on analytics reset timestamp
+  const filteredOrders = useMemo(() => {
+    if (!analyticsResetTimestamp) return orders;
+    return orders.filter((order) => order.createdAt > analyticsResetTimestamp);
+  }, [orders, analyticsResetTimestamp]);
+
+  // Dashboard Analytics - derived from orders
+  const stats = useMemo(() => {
+    const totalRevenue = filteredOrders.reduce((sum, order) => sum + order.amount, 0);
+    const totalTransactions = filteredOrders.length;
+    const uniqueUsers = new Set(filteredOrders.map((order) => order.customer)).size;
+    return {
+      totalRevenue,
+      totalTransactions,
+      productViewed: 0,
+      uniqueUsers,
+    };
+  }, [filteredOrders]);
+
+  // Sales Report - Shopping = Website = sum(amount), Others = 0
+  const salesByPlatform = useMemo(() => {
+    const totalAmount = stats.totalRevenue;
+    return [
+      { name: 'Shopping', value: totalAmount },
+      { name: 'Website', value: totalAmount },
+      { name: 'Others', value: 0 },
+    ];
+  }, [stats.totalRevenue]);
+
+  // Traffic data
+  const trafficData = useMemo(() => {
+    return [
+      { name: 'Website', views: stats.totalTransactions },
+      { name: 'Instagram Ads', views: 0 },
+      { name: 'Facebook Ads', views: 0 },
+    ];
+  }, [stats.totalTransactions]);
+
+  // Popular Products - grouped by productId, sorted by quantity
+  const popularProducts = useMemo(() => {
+    if (filteredOrders.length === 0) {
+      return [];
+    }
+    const productMap = new Map<
+      string,
+      {
+        productId: string;
+        name: string;
+        image: string;
+        quantity: number;
+      }
+    >();
+    filteredOrders.forEach((order) => {
+      const productId = order.productId || order.productName;
+      const existing = productMap.get(productId);
+      if (existing) {
+        existing.quantity += 1;
+      } else {
+        productMap.set(productId, {
+          productId,
+          name: order.productName,
+          image: order.productImage,
+          quantity: 1,
+        });
+      }
+    });
+    return Array.from(productMap.values())
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 6);
+  }, [filteredOrders]);
+
+  // Sales chart data - filtered by time range and aggregated
+  const salesChartData = useMemo(() => {
+    const now = new Date();
+    let startDate: Date;
+    let aggregateByMonth = false;
+    switch (salesTimeRange) {
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '14d':
+        startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+        break;
+      case '1m':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '1y':
+        startDate = new Date(now.getFullYear(), 0, 1);
+        aggregateByMonth = true;
+        break;
+    }
+    const rangeOrders = filteredOrders.filter((order) => order.createdAt >= startDate);
+    if (aggregateByMonth) {
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const currentMonth = now.getMonth();
+      return months.slice(0, currentMonth + 1).map((month, index) => {
+        const monthOrders = rangeOrders.filter((order) => order.createdAt.getMonth() === index);
+        return {
+          name: month,
+          sales: monthOrders.reduce((sum, order) => sum + order.amount, 0),
+        };
+      });
+    } else {
+      const dayMap = new Map<string, number>();
+      const daysInRange = salesTimeRange === '7d' ? 7 : salesTimeRange === '14d' ? 14 : 30;
+      for (let i = daysInRange - 1; i >= 0; i--) {
+        const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        const key = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        dayMap.set(key, 0);
+      }
+      rangeOrders.forEach((order) => {
+        const key = order.createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        if (dayMap.has(key)) {
+          dayMap.set(key, (dayMap.get(key) || 0) + order.amount);
+        }
+      });
+      return Array.from(dayMap.entries()).map(([name, sales]) => ({ name, sales }));
+    }
+  }, [filteredOrders, salesTimeRange]);
+
+  // Get label for time range
+  const timeRangeLabel = useMemo(() => {
+    switch (salesTimeRange) {
+      case '7d': return 'Last 7 days';
+      case '14d': return 'Last 14 days';
+      case '1m': return 'Last 30 days';
+      case '1y': return 'This year';
+    }
+  }, [salesTimeRange]);
+
+  // Retry handler: resets state and re-creates the listener
+  const handleRetry = () => {
+    setIsServerReady(false);
+    setErrorMsg(null);
+    setLoadingOrders(true);
+    setListenerKey((prev) => prev + 1);
+  };
+
+  // Clear analytics handler
+  const handleClearAnalytics = async () => {
+    const db = getFirebaseDb();
+    if (!user?.uid || !db) {
+      toast.error('You must be logged in to clear analytics.');
+      return;
+    }
+    setIsClearing(true);
+    try {
+      const now = new Date();
+      const userDocRef = doc(db, 'users', user.uid);
+      await setDoc(
+        userDocRef,
+        {
+          preferences: {
+            analyticsResetTimestamp: now,
+          },
+        },
+        { merge: true }
+      );
+      setAnalyticsResetTimestamp(now);
+      setShowClearModal(false);
+      toast.success('Analytics cleared.');
+    } catch (error) {
+      console.error('Error clearing analytics:', error);
+      toast.error('Failed to clear analytics.');
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  // Generate test order - fetches REAL products from Firestore
+  const handleGenerateTestOrder = async () => {
+    const db = getFirebaseDb();
+    if (!user?.uid || !db) {
+      toast.error('You must be logged in to generate test orders.');
+      return;
+    }
+    setIsGeneratingOrder(true);
+    try {
+      const productsSnapshot = await getDocs(collection(db, 'products'));
+      if (productsSnapshot.empty) {
+        toast.error('No products found. Please add products first.');
+        setIsGeneratingOrder(false);
+        return;
+      }
+      const products: FirestoreProduct[] = productsSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        name: doc.data().name || 'Unknown Product',
+        price: doc.data().price || 0,
+        imageUrl: doc.data().imageUrl || '',
+        category: doc.data().category || 'Uncategorized',
+      }));
+      const product = products[Math.floor(Math.random() * products.length)];
+      const orderId = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const orderData = {
+        orderId: orderId,
+        productId: product.id,
+        productName: product.name,
+        productImage: product.imageUrl || '',
+        amount: product.price,
+        customer: 'Test Customer',
+        paymentMethod: 'Test',
+        status: 'ordered',
+        createdAt: serverTimestamp(),
+        userId: user.uid,
+      };
+      console.log('Creating test order:', orderData);
+      await addDoc(collection(db, 'orders'), orderData);
+      toast.success(`Test order created: ${product.name} ($${product.price.toFixed(2)})`);
+    } catch (error: any) {
+      console.error('Error generating test order:', error);
+      if (error?.code === 'permission-denied') {
+        toast.error('Permission denied. Please check Firestore rules.');
+      } else {
+        toast.error(`Failed to generate test order: ${error?.message || 'Unknown error'}`);
+      }
+    } finally {
+      setIsGeneratingOrder(false);
+    }
+  };
+
+  // ===== NOW WE CAN DO EARLY RETURNS =====
   // Show Firebase init error first
   if (!firebaseReady) {
     return (
@@ -438,459 +816,6 @@ export default function DashboardPage() {
       </div>
     );
   }
-  const { palette } = useTheme();
-  const themeColors = COLOR_PALETTES[palette];
-
-  // Firestore orders state (realtime)
-  const [orders, setOrders] = useState<FirestoreOrder[]>([]);
-  const [loadingOrders, setLoadingOrders] = useState(true);
-  const [isServerReady, setIsServerReady] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [listenerKey, setListenerKey] = useState(0); // Used to force re-create listener on retry
-
-  // UI state
-  const [showClearModal, setShowClearModal] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
-  const [analyticsResetTimestamp, setAnalyticsResetTimestamp] = useState<Date | null>(null);
-  const [loadingPreferences, setLoadingPreferences] = useState(true);
-  const [isGeneratingOrder, setIsGeneratingOrder] = useState(false);
-  const [salesTimeRange, setSalesTimeRange] = useState<'7d' | '14d' | '1m' | '1y'>('1y');
-
-  // View toggle state (purely presentational - does not affect data)
-  const [salesReportView, setSalesReportView] = useState<'donut' | 'standard'>('donut');
-  const [trafficAnalyticsView, setTrafficAnalyticsView] = useState<'donut' | 'standard'>('donut');
-
-  // Realtime listener for orders collection
-  // Only render data from server (not cache) to prevent ghost rows
-  useEffect(() => {
-    // Get Firebase instance (lazy init, client-side only)
-    const db = getFirebaseDb();
-
-    // GUARD: Ensure Firebase and auth are ready
-    if (!firebaseReady || !db || !user?.uid) {
-      setLoadingOrders(false);
-      setErrorMsg('Firebase not ready or user not authenticated');
-      return;
-    }
-
-    // Reset state when starting/retrying listener
-    let serverReadyLocal = false;
-    setLoadingOrders(true);
-    setErrorMsg(null);
-    setOrders([]); // Clear stale data immediately
-
-    // Performance: Limit to last 500 orders for dashboard overview
-    // This reduces Firestore load while still showing recent activity
-    const ordersQuery = query(
-      collection(db, 'orders'),
-      orderBy('createdAt', 'desc')
-    );
-
-    // Debug logging in development
-    const isDev = process.env.NODE_ENV !== 'production';
-    if (isDev) {
-      console.log('[Dashboard] Subscribing to orders collection');
-    }
-
-    // Timeout fallback: if server data doesn't arrive within 6 seconds, show error
-    const timeoutId = setTimeout(() => {
-      if (!serverReadyLocal) {
-        setLoadingOrders(false);
-        setErrorMsg("Can't reach Firestore. Check Vercel env vars or Firestore rules.");
-        if (isDev) {
-          console.error('[Dashboard] Timeout: No server response after 6 seconds');
-        }
-      }
-    }, 6000);
-
-    let unsubscribe: (() => void) | undefined;
-
-    try {
-      unsubscribe = onSnapshot(
-        ordersQuery,
-      (snapshot) => {
-        // Check if this is from cache or server
-        const fromCache = snapshot.metadata.fromCache;
-
-        // Debug logging in development
-        if (isDev) {
-          console.log('[Dashboard] Snapshot received:', {
-            fromCache,
-            docCount: snapshot.docs.length,
-            serverReady: serverReadyLocal,
-          });
-        }
-
-        // If from cache and server not ready yet, skip updating state
-        // This prevents ghost rows from appearing during initial load
-        if (fromCache && !serverReadyLocal) {
-          return;
-        }
-
-        const ordersData: FirestoreOrder[] = snapshot.docs.map((doc) => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            orderId: data.orderId || doc.id,
-            productId: data.productId || '',
-            productName: data.productName || data.product || 'Unknown Product',
-            productImage: data.productImage || data.image || '',
-            amount: data.amount || 0,
-            customer: data.customer || 'Unknown',
-            paymentMethod: data.paymentMethod || 'Unknown',
-            status: data.status || 'ordered',
-            createdAt: data.createdAt?.toDate?.() || new Date(),
-          };
-        });
-
-        setOrders(ordersData);
-
-        // Mark server as ready once we get server data
-        if (!fromCache) {
-          serverReadyLocal = true;
-          setIsServerReady(true);
-          clearTimeout(timeoutId);
-          setErrorMsg(null);
-        }
-
-        setLoadingOrders(false);
-      },
-      (error: any) => {
-        // Enhanced error logging with Firebase error code
-        const errorCode = error?.code || 'unknown';
-        const errorMessage = error?.message || 'Failed to load orders';
-
-        if (isDev) {
-          console.error('[Dashboard] Firestore error:', {
-            code: errorCode,
-            message: errorMessage,
-            fullError: error,
-          });
-        } else {
-          console.error('[Dashboard] Firestore error:', errorCode);
-        }
-
-        clearTimeout(timeoutId);
-
-        // Provide user-friendly error messages
-        let userMessage = errorMessage;
-        if (errorCode === 'permission-denied') {
-          userMessage = 'Permission denied. Check Firestore security rules.';
-        } else if (errorCode === 'unavailable') {
-          userMessage = "Can't reach Firestore. Check your internet connection.";
-        } else if (errorCode === 'unauthenticated') {
-          userMessage = 'Authentication required. Please sign in again.';
-        }
-
-        setErrorMsg(userMessage);
-        setLoadingOrders(false);
-      }
-      );
-    } catch (error: any) {
-      console.error('[Dashboard] Exception in listener setup:', error);
-      setLoadingOrders(false);
-      setErrorMsg('Failed to set up real-time updates. Please refresh the page.');
-      clearTimeout(timeoutId);
-    }
-
-    return () => {
-      clearTimeout(timeoutId);
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
-  }, [listenerKey, user?.uid]);
-
-  // Fetch user's analytics reset timestamp on mount
-  useEffect(() => {
-    const fetchAnalyticsPreference = async () => {
-      const db = getFirebaseDb();
-
-      if (!user?.uid || !db || !firebaseReady) {
-        setLoadingPreferences(false);
-        return;
-      }
-
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
-
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          const resetTimestamp = data?.preferences?.analyticsResetTimestamp;
-          if (resetTimestamp) {
-            setAnalyticsResetTimestamp(
-              resetTimestamp.toDate ? resetTimestamp.toDate() : new Date(resetTimestamp)
-            );
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching analytics preference:', error);
-      } finally {
-        setLoadingPreferences(false);
-      }
-    };
-
-    fetchAnalyticsPreference();
-  }, [user]);
-
-  // Filter orders based on analytics reset timestamp
-  const filteredOrders = useMemo(() => {
-    if (!analyticsResetTimestamp) return orders;
-    return orders.filter((order) => order.createdAt > analyticsResetTimestamp);
-  }, [orders, analyticsResetTimestamp]);
-
-  // Clear analytics handler
-  const handleClearAnalytics = async () => {
-    const db = getFirebaseDb();
-
-    if (!user?.uid || !db) {
-      toast.error('You must be logged in to clear analytics.');
-      return;
-    }
-
-    setIsClearing(true);
-    try {
-      const now = new Date();
-      const userDocRef = doc(db, 'users', user.uid);
-      await setDoc(
-        userDocRef,
-        {
-          preferences: {
-            analyticsResetTimestamp: now,
-          },
-        },
-        { merge: true }
-      );
-
-      setAnalyticsResetTimestamp(now);
-      setShowClearModal(false);
-      toast.success('Analytics cleared.');
-    } catch (error) {
-      console.error('Error clearing analytics:', error);
-      toast.error('Failed to clear analytics.');
-    } finally {
-      setIsClearing(false);
-    }
-  };
-
-  // Generate test order - fetches REAL products from Firestore
-  const handleGenerateTestOrder = async () => {
-    const db = getFirebaseDb();
-
-    if (!user?.uid || !db) {
-      toast.error('You must be logged in to generate test orders.');
-      return;
-    }
-
-    setIsGeneratingOrder(true);
-    try {
-      // Fetch all products from Firestore
-      const productsSnapshot = await getDocs(collection(db, 'products'));
-
-      if (productsSnapshot.empty) {
-        toast.error('No products found. Please add products first.');
-        setIsGeneratingOrder(false);
-        return;
-      }
-
-      // Map products with their IDs
-      const products: FirestoreProduct[] = productsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        name: doc.data().name || 'Unknown Product',
-        price: doc.data().price || 0,
-        imageUrl: doc.data().imageUrl || '',
-        category: doc.data().category || 'Uncategorized',
-      }));
-
-      // Randomly select ONE product
-      const product = products[Math.floor(Math.random() * products.length)];
-
-      // Generate order ID
-      const orderId = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-      // Create order document in Firestore
-      const orderData = {
-        orderId: orderId,
-        productId: product.id,
-        productName: product.name,
-        productImage: product.imageUrl || '',
-        amount: product.price,
-        customer: 'Test Customer',
-        paymentMethod: 'Test',
-        status: 'ordered',
-        createdAt: serverTimestamp(),
-        userId: user.uid,
-      };
-
-      console.log('Creating test order:', orderData);
-
-      await addDoc(collection(db, 'orders'), orderData);
-
-      toast.success(`Test order created: ${product.name} ($${product.price.toFixed(2)})`);
-    } catch (error: any) {
-      console.error('Error generating test order:', error);
-
-      if (error?.code === 'permission-denied') {
-        toast.error('Permission denied. Please check Firestore rules.');
-      } else {
-        toast.error(`Failed to generate test order: ${error?.message || 'Unknown error'}`);
-      }
-    } finally {
-      setIsGeneratingOrder(false);
-    }
-  };
-
-  // Dashboard Analytics - derived from orders
-  const stats = useMemo(() => {
-    const totalRevenue = filteredOrders.reduce((sum, order) => sum + order.amount, 0);
-    const totalTransactions = filteredOrders.length;
-    const uniqueUsers = new Set(filteredOrders.map((order) => order.customer)).size;
-
-    return {
-      totalRevenue,
-      totalTransactions,
-      productViewed: 0, // Keep at 0 as per requirements
-      uniqueUsers,
-    };
-  }, [filteredOrders]);
-
-  // Sales Report - Shopping = Website = sum(amount), Others = 0
-  const salesByPlatform = useMemo(() => {
-    const totalAmount = stats.totalRevenue;
-    return [
-      { name: 'Shopping', value: totalAmount },
-      { name: 'Website', value: totalAmount },
-      { name: 'Others', value: 0 },
-    ];
-  }, [stats.totalRevenue]);
-
-  // Traffic data
-  const trafficData = useMemo(() => {
-    return [
-      { name: 'Website', views: stats.totalTransactions },
-      { name: 'Instagram Ads', views: 0 },
-      { name: 'Facebook Ads', views: 0 },
-    ];
-  }, [stats.totalTransactions]);
-
-  // Popular Products - grouped by productId, sorted by quantity
-  const popularProducts = useMemo(() => {
-    if (filteredOrders.length === 0) {
-      return [];
-    }
-
-    // Group by productId and count quantity
-    const productMap = new Map<
-      string,
-      {
-        productId: string;
-        name: string;
-        image: string;
-        quantity: number;
-      }
-    >();
-
-    filteredOrders.forEach((order) => {
-      const productId = order.productId || order.productName;
-      const existing = productMap.get(productId);
-
-      if (existing) {
-        existing.quantity += 1;
-      } else {
-        productMap.set(productId, {
-          productId,
-          name: order.productName,
-          image: order.productImage,
-          quantity: 1,
-        });
-      }
-    });
-
-    // Sort by quantity (highest first) and take top 6
-    return Array.from(productMap.values())
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, 6);
-  }, [filteredOrders]);
-
-  // Sales chart data - filtered by time range and aggregated
-  const salesChartData = useMemo(() => {
-    const now = new Date();
-    let startDate: Date;
-    let aggregateByMonth = false;
-
-    switch (salesTimeRange) {
-      case '7d':
-        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case '14d':
-        startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-        break;
-      case '1m':
-        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      case '1y':
-        startDate = new Date(now.getFullYear(), 0, 1); // Start of current year
-        aggregateByMonth = true;
-        break;
-    }
-
-    // Filter orders by date range
-    const rangeOrders = filteredOrders.filter((order) => order.createdAt >= startDate);
-
-    if (aggregateByMonth) {
-      // Aggregate by month for 1y view
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const currentMonth = now.getMonth();
-
-      return months.slice(0, currentMonth + 1).map((month, index) => {
-        const monthOrders = rangeOrders.filter((order) => order.createdAt.getMonth() === index);
-        return {
-          name: month,
-          sales: monthOrders.reduce((sum, order) => sum + order.amount, 0),
-        };
-      });
-    } else {
-      // Aggregate by day for 7d/14d/1m views
-      const dayMap = new Map<string, number>();
-
-      // Initialize all days in range
-      const daysInRange = salesTimeRange === '7d' ? 7 : salesTimeRange === '14d' ? 14 : 30;
-      for (let i = daysInRange - 1; i >= 0; i--) {
-        const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-        const key = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        dayMap.set(key, 0);
-      }
-
-      // Sum amounts by day
-      rangeOrders.forEach((order) => {
-        const key = order.createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        if (dayMap.has(key)) {
-          dayMap.set(key, (dayMap.get(key) || 0) + order.amount);
-        }
-      });
-
-      return Array.from(dayMap.entries()).map(([name, sales]) => ({ name, sales }));
-    }
-  }, [filteredOrders, salesTimeRange]);
-
-  // Get label for time range
-  const timeRangeLabel = useMemo(() => {
-    switch (salesTimeRange) {
-      case '7d': return 'Last 7 days';
-      case '14d': return 'Last 14 days';
-      case '1m': return 'Last 30 days';
-      case '1y': return 'This year';
-    }
-  }, [salesTimeRange]);
-
-  // Retry handler: resets state and re-creates the listener
-  const handleRetry = () => {
-    setIsServerReady(false);
-    setErrorMsg(null);
-    setLoadingOrders(true);
-    setListenerKey((prev) => prev + 1);
-  };
 
   // Show error state with retry button
   if (errorMsg && !isServerReady) {

@@ -68,6 +68,7 @@ export function useCustomers() {
     // Real-time listener on customers collection
     const unsubscribe = onSnapshot(
       customersQuery,
+      { includeMetadataChanges: true },
       (snapshot) => {
         const fromCache = snapshot.metadata.fromCache;
 

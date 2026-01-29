@@ -56,6 +56,7 @@ export function useActivities(maxItems?: number) {
 
     const unsubscribe = onSnapshot(
       q,
+      { includeMetadataChanges: true },
       (snapshot) => {
         const fromCache = snapshot.metadata.fromCache;
 

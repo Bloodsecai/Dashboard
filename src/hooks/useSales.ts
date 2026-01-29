@@ -53,6 +53,7 @@ export function useSales() {
 
     const unsubscribe = onSnapshot(
       salesQuery,
+      { includeMetadataChanges: true },
       (snapshot) => {
         const fromCache = snapshot.metadata.fromCache;
 

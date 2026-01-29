@@ -249,6 +249,7 @@ export function useDashboardData(periodDays: number = 30) {
     // Sales listener - only update state when server data arrives
     const unsubSales = onSnapshot(
       collection(db, 'sales'),
+      { includeMetadataChanges: true },
       (snapshot) => {
         const fromCache = snapshot.metadata.fromCache;
 
@@ -282,6 +283,7 @@ export function useDashboardData(periodDays: number = 30) {
     // Activities listener
     const unsubActivities = onSnapshot(
       collection(db, 'activities'),
+      { includeMetadataChanges: true },
       (snapshot) => {
         const fromCache = snapshot.metadata.fromCache;
 
@@ -307,6 +309,7 @@ export function useDashboardData(periodDays: number = 30) {
     // Customers listener
     const unsubCustomers = onSnapshot(
       collection(db, 'customers'),
+      { includeMetadataChanges: true },
       (snapshot) => {
         const fromCache = snapshot.metadata.fromCache;
 
@@ -332,6 +335,7 @@ export function useDashboardData(periodDays: number = 30) {
     // Targets listener
     const unsubTargets = onSnapshot(
       collection(db, 'targets'),
+      { includeMetadataChanges: true },
       (snapshot) => {
         const fromCache = snapshot.metadata.fromCache;
 
